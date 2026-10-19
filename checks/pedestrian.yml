@@ -1,0 +1,274 @@
+# Data-quality checks for the City of Melbourne pedestrian counting data.
+#
+# Tables (loaded by dq/load.py):
+#   counts   one row per sensor (location_id) per hour (sensing_date, hourday)
+#   sensors  one row per sensor: name, description, type, status, coordinates
+#
+# Every check returns the failing records, so any failure can be inspected by
+# running the same query. Severity: error = the data is wrong or unusable for
+# the reports that depend on it; warn = usable with a known caveat.
+# {reference_date} is the Melbourne date on which the portal last processed
+# the counts.
+
+checks:
+  # ---- counts: keys and validity -------------------------------------------
+  - id: counts_grain_unique
+    type: unique
+    table: counts
+    columns: [location_id, sensing_date, hourday]
+    dimension: uniqueness
+    severity: error
+    description: >
+      One row per sensor per hour. A repeat would double-count pedestrians in
+      every total.
+
+  - id: counts_id_unique
+    type: unique
+    table: counts
+    columns: [id]
+    dimension: uniqueness
+    severity: warn
+    description: >
+      The published row id is unique. Anyone joining or de-duplicating on
+      `id` relies on this.
+
+  - id: counts_id_format
+    type: expression
+    table: counts
+    expression: >
+      id::varchar = location_id::varchar || hourday::varchar
+                    || strftime(sensing_date, '%Y%m%d')
+    dimension: consistency
+    severity: warn
+    description: >
+      Pins down how the undocumented `id` is built: sensor id, hour and date
+      run together with no separator or padding. If this passes while
+      counts_id_unique fails, the collisions come from the id format itself,
+      e.g. sensor 1 at 10:00 and sensor 11 at 00:00 both give 110 + date.
+
+  - id: counts_required_fields
+    type: not_null
+    table: counts
+    columns: [location_id, sensing_date, hourday, pedestriancount]
+    dimension: completeness
+    severity: error
+    description: The key fields and the count are always filled in.
+
+  - id: counts_hour_in_range
+    type: accepted_range
+    table: counts
+    column: hourday
+    min: 0
+    max: 23
+    dimension: validity
+    severity: error
+    description: The hour of the day is between 0 and 23.
+
+  - id: counts_not_negative
+    type: accepted_range
+    table: counts
+    column: pedestriancount
+    min: 0
+    dimension: validity
+    severity: error
+    description: A pedestrian count can't be negative.
+
+  - id: counts_directions_add_up
+    type: expression
+    table: counts
+    expression: direction_1 + direction_2 = pedestriancount
+    dimension: consistency
+    severity: warn
+    description: >
+      The two directional counts add up to the total, so direction-based
+      reports agree with total-based ones.
+
+  - id: counts_sensor_name_present
+    type: not_null
+    table: counts
+    columns: [sensor_name]
+    dimension: completeness
+    severity: warn
+    description: >
+      Every count carries the sensor's name, which is what dashboards label
+      sensors with.
+
+  # ---- counts vs sensors: referential integrity ----------------------------
+  - id: counts_sensor_exists
+    type: relationships
+    table: counts
+    column: location_id
+    to: sensors
+    field: location_id
+    dimension: integrity
+    severity: error
+    description: >
+      Every count belongs to a sensor in the sensor locations table. Counts
+      without one can't be placed on a map or assigned to a precinct.
+
+  - id: sensors_installed_before_counts
+    type: sql
+    dimension: consistency
+    severity: warn
+    sql: >
+      select c.location_id, s.sensor_name, s.installation_date,
+             min(c.sensing_date) as first_count
+      from counts c join sensors s using (location_id)
+      group by c.location_id, s.sensor_name, s.installation_date
+      having min(c.sensing_date) < s.installation_date
+    checked_sql: >
+      select count(distinct c.location_id)
+      from counts c join sensors s using (location_id)
+    description: No sensor has counts from before its installation date.
+
+  # ---- freshness ------------------------------------------------------------
+  - id: counts_fresh
+    type: freshness
+    table: counts
+    column: sensing_date
+    max_age_days: 2
+    dimension: freshness
+    severity: error
+    description: >
+      The newest counts are at most 2 days older than the portal's last
+      processing date.
+
+  - id: counts_latest_day_complete
+    type: sql
+    dimension: freshness
+    severity: warn
+    sql: >
+      with daily as (
+          select sensing_date, count(*) as n_rows from counts group by sensing_date
+      ),
+      newest as (select max(sensing_date) as day from counts),
+      usual as (
+          select median(n_rows) as median_rows
+          from daily, newest
+          where sensing_date between newest.day - 28 and newest.day - 1
+      )
+      select daily.sensing_date, daily.n_rows as rows_on_newest_day,
+             usual.median_rows as median_rows_previous_28_days,
+             round(100.0 * daily.n_rows / usual.median_rows, 1) as pct_of_usual
+      from daily, newest, usual
+      where daily.sensing_date = newest.day and daily.n_rows < 0.9 * usual.median_rows
+    checked_sql: select 1
+    description: >
+      The newest day has at least 90% of the rows of a usual day (median of
+      the previous 28). If not, "yesterday" totals are partial.
+
+  # ---- completeness over time -----------------------------------------------
+  - id: counts_hour_coverage
+    type: sql
+    dimension: completeness
+    severity: warn
+    tolerance_pct: 1.0
+    sql: >
+      select e.location_id, e.sensing_date, e.hourday
+      from expected_sensor_hours e
+      where not exists (
+          select 1 from counts c
+          where c.location_id = e.location_id and c.sensing_date = e.sensing_date
+            and c.hourday = e.hourday)
+    checked_sql: select count(*) from expected_sensor_hours
+    description: >
+      Each sensor reports every hour between its first and last reading
+      (the newest, partial day excluded). Up to 1% missing is tolerated.
+
+  - id: counts_full_day_gaps
+    type: sql
+    dimension: completeness
+    severity: warn
+    sql: >
+      select distinct e.location_id, e.sensing_date
+      from expected_sensor_hours e
+      where not exists (
+          select 1 from counts c
+          where c.location_id = e.location_id and c.sensing_date = e.sensing_date)
+    checked_sql: >
+      select count(*) from (select distinct location_id, sensing_date
+                            from expected_sensor_hours)
+    description: >
+      No sensor goes a whole day without any reading while it is in service.
+      A dark day shows up as a fall in that sensor's daily total.
+
+  - id: counts_sensor_still_reporting
+    type: sql
+    dimension: completeness
+    severity: warn
+    sql: >
+      select location_id, any_value(sensor_name) as sensor_name,
+             max(sensing_date) as last_reading,
+             (select max(sensing_date) from counts) - max(sensing_date) as days_silent
+      from counts
+      group by location_id
+      having (select max(sensing_date) from counts) - max(sensing_date) > 7
+      order by last_reading
+    checked_sql: select count(distinct location_id) from counts
+    description: >
+      Every sensor in the counts has reported in the last 7 days. A silent
+      sensor drops out of totals and makes the city look quieter.
+
+  # ---- sensors ----------------------------------------------------------------
+  - id: sensors_pk_unique
+    type: unique
+    table: sensors
+    columns: [location_id]
+    dimension: uniqueness
+    severity: error
+    description: One row per sensor, so joining counts to sensors can't duplicate counts.
+
+  - id: sensors_name_unique
+    type: unique
+    table: sensors
+    columns: [sensor_name]
+    dimension: uniqueness
+    severity: warn
+    description: >
+      Each sensor name belongs to one sensor. If not, joining or filtering on
+      the name mixes two sensors.
+
+  - id: sensors_required_fields
+    type: not_null
+    table: sensors
+    columns: [location_id, sensor_name, sensor_description, location_type, status, latitude, longitude]
+    dimension: completeness
+    severity: error
+    description: Every sensor has a name, description, type, status and coordinates.
+
+  - id: sensors_location_type_valid
+    type: accepted_values
+    table: sensors
+    column: location_type
+    values: [Outdoor, Indoor]
+    dimension: validity
+    severity: error
+    description: The location type is Outdoor or Indoor.
+
+  - id: sensors_in_city_area
+    type: expression
+    table: sensors
+    expression: latitude between -37.86 and -37.76 and longitude between 144.88 and 145.02
+    dimension: validity
+    severity: error
+    description: >
+      Coordinates fall inside a box around the City of Melbourne
+      municipality, which catches swapped or zeroed latitude/longitude.
+
+  - id: sensors_active_outdoor_reporting
+    type: sql
+    dimension: consistency
+    severity: warn
+    sql: >
+      select s.location_id, s.sensor_name, s.sensor_description, s.status
+      from sensors s
+      where s.location_type = 'Outdoor' and s.status = 'A'
+        and not exists (
+            select 1 from counts c
+            where c.location_id = s.location_id
+              and c.sensing_date > (select max(sensing_date) from counts) - 7)
+    checked_sql: >
+      select count(*) from sensors where location_type = 'Outdoor' and status = 'A'
+    description: >
+      Every outdoor sensor marked active (status A) has counts in the last
+      7 days. (Indoor sensors aren't part of this counts dataset.)
