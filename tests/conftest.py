@@ -10,6 +10,8 @@ Planted defects:
   and its installation date is after its first count;
 - sensor 3 stops after 2026-09-15;
 - sensors 11 and 50 share a name, and sensor 50 (outdoor, active) has no counts.
+Not a defect: like the real feed, there is no 02:00 row on 2026-10-04, when
+daylight saving starts in Melbourne and that hour doesn't exist.
 """
 import duckdb
 import pytest
@@ -42,6 +44,7 @@ def con():
                hourday * 3 + location_id as pedestriancount, sensor_name
         from g
         where not (sensing_date = DATE '2026-10-10' and hourday > 3)
+          and not (sensing_date = DATE '2026-10-04' and hourday = 2)
           and not (location_id = 2 and sensing_date = DATE '2026-09-05' and hourday = 3)
           and not (location_id = 2 and sensing_date = DATE '2026-09-20')
     """)

@@ -66,12 +66,18 @@ run_checks.py ──► DuckDB (in memory) ──► checks/pedestrian.yml (21 c
 
 **21 checks: 12 pass, 8 warn, 1 error.** Full report: [`results/DQ_REPORT.md`](results/DQ_REPORT.md).
 
+*Correction (2026-10-19):* the first version of this report counted 98,004 missing
+sensor-hours out of 1,724,352. 199 of them were 02:00 on the two days daylight saving
+started (2025-10-05 and 2026-10-04). That hour doesn't exist in Melbourne time, so
+it can't have a reading. The expected-hours view now skips local times that don't
+exist, and a test covers it.
+
 | Check | Result | What it means for a report |
 |---|---|---|
 | `counts_id_unique` | ⚠️ 135,070 rows (8.30%) share their `id` with another row | The `id` is the sensor id, hour and date run together with no separator (`counts_id_format` passes on every row), so sensor 1 at 10:00 and sensor 11 at 00:00 both get `110` + date. Joining or de-duplicating on `id` silently merges different sensors. The real key, sensor + date + hour, is unique (`counts_grain_unique` passes). |
 | `counts_sensor_exists` | ❌ 20,472 rows (1.26%) belong to sensors 28 and 78, which aren't in the sensor table | These sensors stopped reporting on 2025-11-20 and 2026-02-13 and their rows have no sensor name either. Any report that joins counts to sensors (maps, precincts, named-street rankings) silently drops them; city-wide totals keep them. The two give different answers for the same period. |
 | `counts_latest_day_complete` | ⚠️ 2026-10-18 has 354 rows, 15.6% of a usual day (median 2,273) | The newest day only covers 00:00–04:00 (hours 0–3). A "yesterday vs last week" tile built on the latest date would show a fall of about 84% that isn't real. |
-| `counts_hour_coverage` | ⚠️ 98,004 of 1,724,352 expected sensor-hours missing (5.68%) | Hourly averages and daily totals are computed over different numbers of hours per sensor. Part 2 looks at where the gaps are and what they do to the numbers. |
+| `counts_hour_coverage` | ⚠️ 97,805 of 1,724,153 expected sensor-hours missing (5.67%) | Hourly averages and daily totals are computed over different numbers of hours per sensor. Part 2 looks at where the gaps are and what they do to the numbers. |
 | `counts_full_day_gaps` | ⚠️ 458 sensor-days (0.64%) with no reading at all | A dark day looks like a quiet day in that sensor's daily total. |
 | `counts_sensor_still_reporting` + `sensors_active_outdoor_reporting` | ⚠️ 3 sensors silent for 7+ days; one of them (108, William St – Little Lonsdale St) is still marked active | Sensor 108 last reported on 2026-07-08 (102 days before the newest data) but its status is still `A`. The status field can't be used to decide which sensors to include. |
 | `sensors_name_unique` | ⚠️ 3 sensor names (`BirBridge_T`, `FliS_T`, `Lat526_T`) are each used by 2 sensors | Filtering or joining on the name adds two sensors together. Use `location_id`. |

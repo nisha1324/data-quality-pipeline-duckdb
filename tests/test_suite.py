@@ -12,16 +12,17 @@ SUITE = Path(__file__).resolve().parents[1] / "checks" / "pedestrian.yml"
 
 # check id -> (failing, checked, status)
 EXPECTED = {
-    # 39 full days x 10 colliding hours x 2 sensors
-    "counts_id_unique": (780, None, "warn"),
-    # sensor 99: 39 full days + 4 hours on the newest day
-    "counts_sensor_exists": (39 * 24 + 4, None, "error"),
-    "counts_sensor_name_present": (39 * 24 + 4, None, "warn"),
+    # 39 full days x 10 colliding hours x 2 sensors, less the pair that
+    # would have included sensor 11 at 02:00 on 2026-10-04
+    "counts_id_unique": (780 - 2, None, "warn"),
+    # sensor 99: 39 full days (one without 02:00) + 4 hours on the newest day
+    "counts_sensor_exists": (39 * 24 - 1 + 4, None, "error"),
+    "counts_sensor_name_present": (39 * 24 - 1 + 4, None, "warn"),
     "counts_latest_day_complete": (1, 1, "warn"),
     # sensor 2: 1 hour + 1 day; expected hours = 4 sensors x 39 days x 24
-    # + sensor 3's 15 days x 24 = 4,104, so 25 missing (0.61%) is within the
-    # 1% tolerance
-    "counts_hour_coverage": (25, 4 * 39 * 24 + 15 * 24, "pass"),
+    # + sensor 3's 15 days x 24, less the 4 sensors' non-existent 02:00 on
+    # 2026-10-04 = 4,100, so 25 missing (0.61%) is within the 1% tolerance
+    "counts_hour_coverage": (25, 4 * 39 * 24 + 15 * 24 - 4, "pass"),
     "counts_full_day_gaps": (1, 4 * 39 + 15, "warn"),
     "counts_sensor_still_reporting": (1, 5, "warn"),
     "sensors_installed_before_counts": (1, 4, "warn"),

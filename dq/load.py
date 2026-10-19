@@ -29,15 +29,20 @@ def snapshot_params(source: dict) -> dict:
     }
 
 
-def create_views(con: duckdb.DuckDBPyConnection) -> None:
+def create_views(con: duckdb.DuckDBPyConnection,
+                 tz: str = "Australia/Melbourne") -> None:
     """Derived views the completeness checks share.
 
     expected_sensor_hours: one row for every hour each sensor should have
     reported, from its first to its last reading. The newest day is left out
     because it is still being filled (a separate check covers it), and a
     sensor that stopped is covered by its own check, not counted here.
+    Counts are in local time, so the hour that doesn't exist when daylight
+    saving starts (02:00 on the first Sunday of October in Melbourne) isn't
+    expected: a local time that doesn't exist changes when converted to UTC
+    and back.
     """
-    con.execute("""
+    con.execute(f"""
         create or replace view expected_sensor_hours as
         with bounds as (
             select max(sensing_date) as newest from counts
@@ -51,6 +56,8 @@ def create_views(con: duckdb.DuckDBPyConnection) -> None:
         from span s
         cross join lateral generate_series(s.first_day, s.last_day, interval 1 day) as d(day)
         cross join range(24) as h(hourday)
+        where timezone('{tz}', timezone('{tz}', d.day + to_hours(h.hourday::int)))
+              = d.day + to_hours(h.hourday::int)
     """)
 
 
@@ -65,7 +72,7 @@ def load_snapshot(snapshot_dir: Path, db_path: str | Path = ":memory:"):
         path = snapshot_dir / source["files"][table]["file"]
         con.execute(f"create or replace table {table} as "
                     f"select * exclude (location) from read_parquet('{path}')")
-    create_views(con)
+    create_views(con, source["files"]["counts"]["timezone"])
     params = snapshot_params(source)
     first, last = con.execute(
         "select min(sensing_date), max(sensing_date) from counts").fetchone()
