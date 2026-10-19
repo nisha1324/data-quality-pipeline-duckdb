@@ -1,0 +1,31 @@
+{
+  "snapshot": "2026-10-18T1539Z",
+  "downloaded_at": "2026-10-19T03:58:37+00:00",
+  "portal_licence_policy": "CC BY 4.0 (https://data.melbourne.vic.gov.au/pages/about-our-data/)",
+  "files": {
+    "counts": {
+      "dataset": "pedestrian-counting-system-monthly-counts-per-hour",
+      "url": "https://data.melbourne.vic.gov.au/api/explore/v2.1/catalog/datasets/pedestrian-counting-system-monthly-counts-per-hour/exports/parquet",
+      "file": "counts.parquet",
+      "rows": 1626702,
+      "bytes": 26359345,
+      "sha256": "06caf5762023964cc8bfcd89ed08fea6ec919939345b5f8dafcc4fa11bbb47bd",
+      "data_processed": "2026-10-18T15:39:17+00:00",
+      "metadata_processed": "2026-10-18T15:39:18+00:00",
+      "licence": null,
+      "timezone": "Australia/Melbourne"
+    },
+    "sensors": {
+      "dataset": "pedestrian-counting-system-sensor-locations",
+      "url": "https://data.melbourne.vic.gov.au/api/explore/v2.1/catalog/datasets/pedestrian-counting-system-sensor-locations/exports/parquet",
+      "file": "sensors.parquet",
+      "rows": 134,
+      "bytes": 15030,
+      "sha256": "99525f8ace59300ead70627151efdf06174896a7135a2b7359304bb56f031726",
+      "data_processed": "2026-09-10T15:20:07+00:00",
+      "metadata_processed": "2026-10-18T15:20:08.779000+00:00",
+      "licence": "CC BY",
+      "timezone": null
+    }
+  }
+}
