@@ -66,4 +66,8 @@ def load_snapshot(snapshot_dir: Path, db_path: str | Path = ":memory:"):
         con.execute(f"create or replace table {table} as "
                     f"select * exclude (location) from read_parquet('{path}')")
     create_views(con)
-    return con, snapshot_params(source), source
+    params = snapshot_params(source)
+    first, last = con.execute(
+        "select min(sensing_date), max(sensing_date) from counts").fetchone()
+    params.update(first_date=first.isoformat(), last_date=last.isoformat())
+    return con, params, source

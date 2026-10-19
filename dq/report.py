@@ -37,7 +37,8 @@ def write_markdown(results: list[Result], params: dict, source: dict,
         "",
         f"Snapshot `{params['snapshot']}`: counts processed by the portal at "
         f"{params['reference_ts']} (Melbourne time); "
-        f"{counts['rows']:,} hourly count rows, {sensors['rows']:,} sensors.",
+        f"{counts['rows']:,} hourly count rows from {params['first_date']} to "
+        f"{params['last_date']}, {sensors['rows']:,} sensors.",
         "",
         f"**{len(results)} checks: {n['pass']} pass, {n['warn']} warn, "
         f"{n['error']} error.**",
