@@ -1,6 +1,6 @@
 # Data-quality pipeline on DuckDB: can we trust today's foot-traffic numbers?
 
-> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report) is done. See the [roadmap](#roadmap).
+> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report) and Part 2 (what the missing hours are and what they do to the numbers) are done. See the [roadmap](#roadmap).
 
 City teams, retailers, precinct associations and event planners use pedestrian
 counts to judge how busy the city is: whether a campaign or event brought people
@@ -57,10 +57,11 @@ run_checks.py ──► DuckDB (in memory) ──► checks/pedestrian.yml (21 c
 - **Freshness is measured against the portal's own processing time**, converted to
   Melbourne time, not against the clock of the machine running the checks, so a rerun
   of an old snapshot gives the same answer.
-- **Tests:** 24 offline tests. One builds a synthetic snapshot with planted defects
+- **Tests:** 30 offline tests. One builds a synthetic snapshot with planted defects
   (colliding ids, an orphan sensor, a missing hour, a dark day, a partial newest day, a
   stopped sensor, a shared sensor name) and checks that the real suite catches each with
-  the exact count and passes everything else.
+  the exact count and passes everything else. Six more check the Part 2 gap
+  classes and estimates on a synthetic sensor with planted gaps.
 
 ## Results so far (snapshot 2026-10-18)
 
@@ -100,6 +101,77 @@ before the newest date are usable with a caveat about missing hours; anything la
 `location_id`, never on `id` or the sensor name, and should say that two retired
 sensors aren't on the map. Part 3 turns this into a scorecard per report.
 
+## Part 2: what the missing hours are (snapshot 2026-10-18)
+
+Full write-up: [`results/completeness.md`](results/completeness.md) (made by
+[`scripts/completeness.py`](scripts/completeness.py); logic in
+[`dq/completeness.py`](dq/completeness.py)).
+
+Part 1 found 97,805 missing sensor-hours (5.67%). Each run of consecutive missing
+hours for one sensor is treated as one gap and classed by its length and by the
+readings just before and after it:
+
+| Type of gap | Missing hours | Share |
+|---|---|---|
+| **Likely zero:** under 24 h, at most 5 people an hour on both sides | 42,027 | 43.0% |
+| **Short outage:** under 24 h, next to real activity | 43,434 | 44.4% |
+| **Long outage:** 24 h or more | 12,344 | 12.6% |
+
+**The feed mostly doesn't publish zero counts**, even though the dataset description
+says *"where no pedestrians have passed underneath a sensor during an hour, a count of
+zero will be shown"*. It has 143 hours with a count of 0 but 33,999 with a count of 1. For hours whose neighbours were both published, the
+chance of being missing is 43.9% when the busier neighbour had 0–1 people and
+0.02% when it had more than 50. An outage doesn't depend on how busy the street is;
+a dropped zero does. 68% of all missing hours fall between midnight and 6 am.
+
+![Missing share by neighbouring count](results/charts/02_missing_vs_neighbours.png)
+
+What the gaps do to the numbers people report:
+
+- **Hourly profiles are too high overnight.** A plain average over the published
+  hours overstates 01:00–04:00 by 9.0–15.3% (03:00: 28.1 vs 24.4 people per
+  sensor-hour once likely zeros count as 0). Between 09:00 and 17:00 the effect is
+  at most 0.16%.
+- **Totals are short, and by a different amount each month.** Outage hours hold an
+  estimated 1.43% of all pedestrians over two years, but by month it ranges from
+  0.20% to 4.06%. Nov 2025 to Jun 2026 are all 2.6–4.1% short because sensor 1,
+  **Bourke Street Mall (North)**, was dark from 10 Nov 2025 to 30 Jun 2026 (5,570
+  hours). That one outage is 57.8% of the estimated missing pedestrians.
+- **Month-on-month change is distorted when a sensor comes back.** July 2026 vs
+  June looks like **+15.0%** on the published totals; it is +11.2% gap-filled and
+  +13.0% like-for-like (the 26 sensors with no outage in either month). Part of the
+  "July jump" is Bourke Street Mall coming back online.
+- **Street rankings: one sensor reads about half its real total.** Lygon St (East)
+  (sensor 37) has 826 outage gaps, most often 9 hours from 14:00 (218 times), so
+  its published total is short by an estimated 46.9%.
+
+![Monthly undercount](results/charts/03_monthly_undercount.png)
+
+How far to trust the estimates: outage hours are filled with the median of the same
+sensor, weekday and hour 1–4 weeks either side. Run the same way on published
+hours, the median error is 13.4% for a single hour and 7.7% for a whole sensor-day
+(90th percentile 27.6%, bias −1.1%). That is good enough to size a shortfall in a
+total, not to stand in for one sensor on one day. Moving the "quiet" threshold from
+2 to 10 people an hour shifts hours between likely zero and short outage, but the
+city-wide shortfall stays at 1.43–1.44%.
+
+Also found in this part: the hour daylight saving ends (02:00 happens twice) is
+stored as one row, and 03:00 that night holds about half the usual count (3,357 vs
+6,021 / 6,265 the weeks either side in 2025), with no documented reason.
+
+**What this means for the business (Part 2):**
+- Hourly or night-time-economy reports should count a missing quiet hour as 0 (or
+  use medians), otherwise late-night footfall looks 9–15% busier than it is.
+- Monthly and year-on-year totals should be gap-filled or like-for-like (the same
+  sensors in both periods). The published month-on-month change differed from the
+  gap-filled one by up to 3.8 points, because one sensor went dark or came back.
+- Street rankings and sensor-level reports need a coverage column, and sensors with
+  heavy outages (Lygon St (East), Bourke Street Mall (North) for Nov 2025 – Jun 2026)
+  should be flagged or left out.
+- For the data owner: publishing zero hours as 0 (as the description says), or a
+  "sensor online" flag, would end the guesswork between "nobody walked past" and
+  "the sensor was off".
+
 ## How to run
 
 ```bash
@@ -107,6 +179,7 @@ uv venv && source .venv/bin/activate        # or python -m venv .venv
 pip install -r requirements.txt
 python scripts/download_data.py             # ~26 MB, a few minutes; saves data/raw/<snapshot>/
 python scripts/run_checks.py                # writes results/; add --fail-on error to gate a pipeline
+python scripts/completeness.py              # Part 2: gap analysis, ~1 minute
 pytest                                      # offline, no download needed
 ```
 
@@ -119,16 +192,18 @@ checks/pedestrian.yml     the check suite (YAML)
 dq/engine.py              check types → SQL, severity, tolerance, suite validation
 dq/load.py                loads a snapshot into DuckDB, freshness reference date, shared views
 dq/report.py              Markdown and CSV output
+dq/completeness.py        Part 2: gap classes, estimates for outage hours, the zero signature
 scripts/download_data.py  snapshot download with metadata and hashes
 scripts/run_checks.py     runs the suite and writes results/
-tests/                    engine tests + the suite on a synthetic snapshot with planted defects
-results/                  DQ_REPORT.md, dq_results.csv, snapshot.json
+scripts/completeness.py   Part 2 report, CSVs and charts
+tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap tests
+results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/
 ```
 
 ## Roadmap
 
 - [x] **Part 1:** snapshot download, YAML check engine on DuckDB, 21 checks, Markdown report, offline tests
-- [ ] **Part 2:** completeness deep dive: where the missing hours are (time of day, sensors), whether they look like outages or unpublished zero counts, and how much they move hourly averages and daily totals
+- [x] **Part 2:** completeness deep dive: where the missing hours are (time of day, sensors), whether they look like outages or unpublished zero counts, and how much they move hourly averages and daily totals (plus a fix for the daylight-saving hour in Part 1)
 - [ ] **Part 3:** a trust scorecard: map each business report (city-wide trend, yesterday's footfall, street ranking, sensor map, hourly profile) to the checks it depends on, and generate "trusted / use with caveat / don't use" for every snapshot
 - [ ] **Part 4:** snapshot-to-snapshot checks (row-count drift, rewritten history) and a scheduled run
 - [ ] Final write-up: TL;DR, recommendations with owners, limitations
