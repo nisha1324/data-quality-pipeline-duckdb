@@ -1,0 +1,252 @@
+# Trust scorecard: the business reports people build on the pedestrian feed,
+# and the rules that downgrade them (read by dq/scorecard.py).
+#
+# A rule fires on a check result from checks/pedestrian.yml (`check` +
+# `status`) or on a measure over the report's own window (`measure` +
+# `above` or `below`; the measures are defined in dq/scorecard.py).
+# A report's verdict is the worst rule that fired: trusted, caveat or
+# dont_use. Reasons can use {value} and {detail} (measures) or {failing} and
+# {fail_pct} (checks).
+#
+# Thresholds follow one rule of thumb for figures shown in a report:
+# an error of up to 1% is trusted, 1-5% needs a caveat, more than 5% means
+# the report as usually built shouldn't be used. Structural problems
+# (a partial day, a broken key) are dont_use whatever their size.
+
+rule_sets:
+  counts_basics:
+    - check: counts_grain_unique
+      status: [error]
+      verdict: dont_use
+      reason: "rows whose sensor-hour appears more than once: {failing:,}, so every total double-counts"
+      fix: de-duplicate on location_id + sensing_date + hourday before summing
+    - check: counts_required_fields
+      status: [error]
+      verdict: dont_use
+      reason: "count rows missing a key or the count: {failing:,}"
+      fix: ask the data owner; don't publish until fixed
+    - check: counts_hour_in_range
+      status: [error]
+      verdict: dont_use
+      reason: "rows with an hour outside 0-23: {failing:,}"
+      fix: ask the data owner; don't publish until fixed
+    - check: counts_not_negative
+      status: [error]
+      verdict: dont_use
+      reason: "rows with a negative count: {failing:,}"
+      fix: ask the data owner; don't publish until fixed
+    - check: counts_fresh
+      status: [error]
+      verdict: dont_use
+      reason: the newest counts are more than 2 days old, so the feed has stalled
+      fix: show the date of the newest data prominently, or hold the report
+
+  sensor_join:
+    - check: sensors_pk_unique
+      status: [error]
+      verdict: dont_use
+      reason: a sensor appears more than once in the sensor table, so joining counts to it duplicates them
+      fix: de-duplicate the sensor table on location_id first
+
+reports:
+  - id: yesterday
+    name: "Yesterday's footfall"
+    question: How many people were in the city on the newest day in the feed, compared with a week earlier?
+    window: newest day in the feed
+    include: [counts_basics]
+    rules:
+      - measure: newest_day_rows_pct
+        below: 90
+        verdict: dont_use
+        reason: "the newest day ({detail}) has only {value:.1f}% of a usual day's rows: it is still being filled, so it looks like a fall that didn't happen"
+        fix: report the last complete day (the day before) and label it with its date
+
+  - id: last_complete_day
+    name: Last complete day's footfall
+    question: How many people were in the city on the day before the newest one?
+    window: day before the newest day
+    include: [counts_basics]
+    rules:
+      - measure: last_day_rows_pct
+        below: 90
+        verdict: dont_use
+        reason: "the day ({detail}) has only {value:.1f}% of a usual day's rows"
+        fix: go back one more day
+      - measure: last_day_outage_pct
+        above: 1
+        verdict: caveat
+        reason: "outage hours hold an estimated {value:.1f}% of the day's pedestrians ({detail})"
+        fix: show the gap-filled total, or say the total is short by about this much
+      - measure: last_day_outage_pct
+        above: 5
+        verdict: dont_use
+        reason: "outage hours hold an estimated {value:.1f}% of the day's pedestrians ({detail})"
+        fix: use the gap-filled total
+      - measure: last_day_dropped_sensors
+        above: 0
+        verdict: caveat
+        reason: "sensors that reported in the week before but have no reading on the day or since: {detail}"
+        fix: compare like-for-like (only sensors that reported on both days)
+
+  - id: month_on_month
+    name: Month-on-month city-wide trend
+    question: Did footfall go up or down in the last whole month, compared with the month before?
+    window: last whole month vs the month before
+    include: [counts_basics]
+    rules:
+      - measure: mom_distortion_pts
+        above: 1
+        verdict: caveat
+        reason: "outages move the change by {value:.1f} points ({detail})"
+        fix: report the gap-filled or like-for-like change
+      - measure: mom_distortion_pts
+        above: 5
+        verdict: dont_use
+        reason: "outages move the change by {value:.1f} points ({detail})"
+        fix: report the gap-filled or like-for-like change
+      - measure: mom_outage_pct
+        above: 1
+        verdict: caveat
+        reason: "outage hours hold an estimated {value:.1f}% of a month's pedestrians ({detail})"
+        fix: say the totals are short by about this much, or show gap-filled totals
+      - measure: mom_sensor_mix_pts
+        above: 1
+        verdict: caveat
+        reason: "sensors that report in only one of the two months move the change by {value:.1f} points ({detail})"
+        fix: compare like-for-like (only sensors that reported in both months)
+      - measure: mom_sensor_mix_pts
+        above: 5
+        verdict: dont_use
+        reason: "sensors that report in only one of the two months move the change by {value:.1f} points ({detail})"
+        fix: compare like-for-like (only sensors that reported in both months)
+
+  - id: year_on_year
+    name: Year-on-year city-wide trend
+    question: Is the last whole month busier than the same month a year earlier?
+    window: last whole month vs the same month a year earlier
+    include: [counts_basics]
+    rules:
+      - measure: yoy_distortion_pts
+        above: 1
+        verdict: caveat
+        reason: "outages move the change by {value:.1f} points ({detail})"
+        fix: report the gap-filled or like-for-like change
+      - measure: yoy_distortion_pts
+        above: 5
+        verdict: dont_use
+        reason: "outages move the change by {value:.1f} points ({detail})"
+        fix: report the gap-filled or like-for-like change
+      - measure: yoy_outage_pct
+        above: 1
+        verdict: caveat
+        reason: "outage hours hold an estimated {value:.1f}% of a month's pedestrians ({detail})"
+        fix: say the totals are short by about this much, or show gap-filled totals
+      - measure: yoy_sensor_mix_pts
+        above: 1
+        verdict: caveat
+        reason: "sensors that report in only one of the two months move the change by {value:.1f} points ({detail})"
+        fix: compare like-for-like (only sensors that reported in both months)
+      - measure: yoy_sensor_mix_pts
+        above: 5
+        verdict: dont_use
+        reason: "sensors that report in only one of the two months move the change by {value:.1f} points ({detail})"
+        fix: compare like-for-like (only sensors that reported in both months)
+
+  - id: street_ranking
+    name: Busiest streets, last 28 days
+    question: Which sensor locations had the most pedestrians over the last 28 complete days?
+    window: 28 days ending on the day before the newest day
+    include: [counts_basics, sensor_join]
+    rules:
+      - measure: ranking_max_shortfall_pct
+        above: 1
+        verdict: caveat
+        reason: "outages make some sensors' totals too low ({detail})"
+        fix: rank on gap-filled totals and show each sensor's coverage
+      - measure: ranking_max_shortfall_pct
+        above: 5
+        verdict: dont_use
+        reason: "a sensor's 28-day total is short by an estimated {value:.1f}% ({detail})"
+        fix: rank on gap-filled totals, or leave out sensors short by more than 5%
+      - measure: ranking_partial_sensors
+        above: 0
+        verdict: caveat
+        reason: "sensors that started or stopped inside the window, so their totals cover only part of it: {detail}"
+        fix: rank on a daily average over the days each sensor reported
+      - measure: window_orphan_sensors
+        above: 0
+        verdict: caveat
+        reason: "sensors with counts in the window but no sensor record (no name or location): {detail}"
+        fix: list them by id, or say they are left out
+      - measure: window_shared_names
+        above: 0
+        verdict: caveat
+        reason: "sensor names used by more than one sensor: {detail}"
+        fix: group and join on location_id, and label with the sensor description, not the name
+
+  - id: hourly_profile
+    name: Typical day by hour, last 28 days
+    question: How busy is the city at each hour of the day, on average?
+    window: 28 days ending on the day before the newest day
+    include: [counts_basics]
+    rules:
+      - measure: profile_max_overstatement_pct
+        above: 1
+        verdict: caveat
+        reason: "a plain average over the published hours overstates the quietest hours by up to {value:.1f}% ({detail}), because empty hours mostly aren't published"
+        fix: count likely-zero gaps as 0 (or use medians) before averaging
+      - measure: profile_max_overstatement_pct
+        above: 5
+        verdict: dont_use
+        reason: "a plain average over the published hours overstates the quietest hours by up to {value:.1f}% ({detail}), because empty hours mostly aren't published"
+        fix: count likely-zero gaps as 0 (or use medians) before averaging
+
+  - id: sensor_map
+    name: Sensor map and list of active sensors
+    question: Where are the sensors, and which ones are working?
+    window: the sensor table, and counts in the last 7-28 days
+    include: [sensor_join]
+    rules:
+      - check: sensors_required_fields
+        status: [error]
+        verdict: dont_use
+        reason: "sensors missing a name, type, status or coordinates: {failing:,}"
+        fix: ask the data owner; don't publish until fixed
+      - check: sensors_in_city_area
+        status: [error]
+        verdict: dont_use
+        reason: "sensors with coordinates outside the City of Melbourne: {failing:,}"
+        fix: ask the data owner; leave those sensors off the map
+      - check: sensors_location_type_valid
+        status: [error]
+        verdict: dont_use
+        reason: "sensors with an unknown location type: {failing:,}"
+        fix: ask the data owner
+      - check: sensors_active_outdoor_reporting
+        status: [warn, error]
+        verdict: caveat
+        reason: "outdoor sensors marked active but with no counts in the last 7 days: {failing:,}"
+        fix: decide "working" from the counts (a reading in the last 7 days), not the status field
+      - check: sensors_name_unique
+        status: [warn, error]
+        verdict: caveat
+        reason: "sensors that share their name with another sensor: {failing:,}"
+        fix: label sensors with the description and key them on location_id
+      - measure: window_orphan_sensors
+        above: 0
+        verdict: caveat
+        reason: "sensors with counts in the last 28 days but no sensor record, so they can't be placed on the map: {detail}"
+        fix: list them separately by id
+
+notes:
+  - >
+    For every report: never join or de-duplicate on the published `id`. It
+    is the sensor id, hour and date run together, so different sensors can
+    share one (`counts_id_unique`). The key is location_id + sensing_date +
+    hourday.
+  - >
+    Thresholds: an error of up to 1% in a figure is trusted, 1-5% needs a
+    caveat, more than 5% means the report as usually built (plain sums and
+    averages over the published rows) shouldn't be used. The outage
+    estimates come from Part 2 (back-tested median error 13.4% for one
+    hour and 7.7% for one sensor-day).
