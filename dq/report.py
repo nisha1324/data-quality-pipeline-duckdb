@@ -49,16 +49,28 @@ def write_markdown(results: list[Result], params: dict, source: dict,
         "",
         "## Summary",
         "",
-        md_table(
-            ["Check", "Dimension", "Severity", "Status", "Failing", "Checked", "Fail %"],
-            [[f"`{r.check.id}`", r.check.dimension, r.check.severity,
-              STATUS_ICON[r.status], f"{r.failing:,}", f"{r.checked:,}",
-              f"{r.fail_pct:.2f}%"] for r in results],
-        ),
+        summary_table(results),
         "",
         "## Failures and warnings",
         "",
+        *failure_sections(results),
     ]
+    path.write_text("\n".join(out).rstrip() + "\n")
+
+
+def summary_table(results: list[Result]) -> str:
+    return md_table(
+        ["Check", "Dimension", "Severity", "Status", "Failing", "Checked", "Fail %"],
+        [[f"`{r.check.id}`", r.check.dimension, r.check.severity,
+          STATUS_ICON[r.status], f"{r.failing:,}", f"{r.checked:,}",
+          f"{r.fail_pct:.2f}%"] for r in results],
+    )
+
+
+def failure_sections(results: list[Result]) -> list[str]:
+    """One section per check with failing records: description, counts, a
+    sorted sample and the query."""
+    out = []
     failed = [r for r in results if r.failing]
     if not failed:
         out.append("None.")
@@ -85,4 +97,4 @@ def write_markdown(results: list[Result], params: dict, source: dict,
             "</details>",
             "",
         ]
-    path.write_text("\n".join(out).rstrip() + "\n")
+    return out
