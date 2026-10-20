@@ -1,6 +1,6 @@
 # Data-quality pipeline on DuckDB: can we trust today's foot-traffic numbers?
 
-> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report), Part 2 (what the missing hours are and what they do to the numbers) and Part 3 (a trust scorecard per business report) are done. See the [roadmap](#roadmap).
+> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report), Part 2 (what the missing hours are and what they do to the numbers), Part 3 (a trust scorecard per business report) and the snapshot-to-snapshot checks of Part 4 are done. See the [roadmap](#roadmap).
 
 City teams, retailers, precinct associations and event planners use pedestrian
 counts to judge how busy the city is: whether a campaign or event brought people
@@ -43,6 +43,7 @@ run_checks.py ──► DuckDB (in memory) ──► checks/pedestrian.yml (21 c
 
 completeness.py ──► gap classes + outage estimates ──► results/completeness.md, charts
 scorecard.py ──► checks + gap estimates + checks/reports.yml ──► results/SCORECARD.md
+drift.py ──► two snapshots side by side ──► checks/drift.yml (10 checks) ──► results/DRIFT.md
 ```
 
 - **Checks are declared in YAML** ([`checks/pedestrian.yml`](checks/pedestrian.yml)), like
@@ -60,13 +61,16 @@ scorecard.py ──► checks + gap estimates + checks/reports.yml ──► res
 - **Freshness is measured against the portal's own processing time**, converted to
   Melbourne time, not against the clock of the machine running the checks, so a rerun
   of an old snapshot gives the same answer.
-- **Tests:** 49 offline tests. One builds a synthetic snapshot with planted defects
+- **Tests:** 56 offline tests. One builds a synthetic snapshot with planted defects
   (colliding ids, an orphan sensor, a missing hour, a dark day, a partial newest day, a
   stopped sensor, a shared sensor name) and checks that the real suite catches each with
   the exact count and passes everything else. Six more check the Part 2 gap
   classes and estimates on a synthetic sensor with planted gaps, and 19 check the
   Part 3 scorecard: rule validation, verdict logic, every measure with exact expected
   values, and the real report definitions end to end on the synthetic snapshot.
+  Seven check the Part 4 drift suite on a synthetic pair of snapshots with planted
+  drift (a deleted, a changed and a late row in history, a revised and a vanished
+  hour on the partial day, an edited sensor, a renamed column).
 
 ## Results so far (snapshot 2026-10-18)
 
@@ -222,6 +226,48 @@ never "trusted". The scorecard is rebuilt from scratch for each snapshot.
   gap-filled one (+11.2%), because Bourke Street Mall came back online. That is why
   the scorecard is rebuilt for every snapshot instead of being a one-off review.
 
+## Part 4: does the feed change after it is published? (snapshots 2026-10-18 and 2026-10-20)
+
+Full report: [`results/DRIFT.md`](results/DRIFT.md) (made by
+[`scripts/drift.py`](scripts/drift.py) from [`checks/drift.yml`](checks/drift.yml);
+loader in [`dq/drift.py`](dq/drift.py)).
+
+Parts 1–3 judge one download. But a figure that went into last week's board pack
+was computed from last week's download. If the portal quietly rewrites history, that
+figure can't be reproduced and nobody is told. Part 4 loads two snapshots side by
+side and matches every sensor-hour on the days both cover (sensor + date + hour,
+never the broken `id`). It then runs 10 checks with the same engine as Part 1. The
+overlap is split in two: the older snapshot's newest day, which was still being
+filled when it was downloaded, and the **settled** days before it. The schema checks
+run first, and a renamed column stops the run before the row-by-row checks, which
+would otherwise crash instead of reporting.
+
+**First pair: `2026-10-18T1539Z` vs `2026-10-20T1538Z` (48 hours apart). 10 checks:
+9 pass, 1 warn.**
+
+| What was compared | Result |
+|---|---|
+| History (2024-10-21 to 2026-10-17) | ✅ all **1,622,066** sensor-hours identical: none deleted, none changed, none arrived late |
+| Rolling window | ✅ moved forward exactly 2 days at both ends (2024-10-19 → 10-21, 2026-10-18 → 10-20), so it stays two years long |
+| Schema and sensor table | ✅ same columns and types; the sensor table is byte-identical (same SHA-256) |
+| The partial day (2026-10-18) | ✅ filled: 354 rows (hours 0–3) became 2,303, a full day |
+| Hours already published on that day | ⚠️ **00:00–02:00 were final; 03:00 wasn't.** 74 sensors had published 3,436 people for 03:00. Two days later, 68 of those 74 counts had been revised, all of them up (median ×1.60), and 15 more sensors had reported, for 5,721 in total. The first figure was 39.9% low. |
+
+The new snapshot ends the same way: its newest day, 2026-10-20, again stops after
+03:00, and 03:00 has 68 sensors against 78–89 at 03:00 on the days before.
+
+**What this means for the business (Part 4):**
+- Reports on settled days are reproducible. Across these two downloads, no number
+  before the newest day changed, so the "last complete day" and monthly figures that
+  Part 3 trusts stay as published, and no late data overtook the Part 2 gap estimates.
+- The feed's last published hour is still being filled. Any "latest hour" or
+  "so far today" figure should stop at the hour before it. Together with Part 1's
+  partial-day finding, the rule for a dashboard is to **treat a day as final only
+  once the feed has moved past it**.
+- History being stable is a result for this pair of snapshots, not a guarantee. One
+  pair 48 hours apart can't show a correction made weeks later. The next step runs
+  the same comparison on a schedule, so that a rewrite is caught the day it happens.
+
 ## How to run
 
 ```bash
@@ -231,27 +277,35 @@ python scripts/download_data.py             # ~26 MB, a few minutes; saves data/
 python scripts/run_checks.py                # writes results/; add --fail-on error to gate a pipeline
 python scripts/completeness.py              # Part 2: gap analysis, ~1 minute
 python scripts/scorecard.py                 # Part 3: trust scorecard per report, ~30 seconds
+python scripts/drift.py                     # Part 4: compare the two newest snapshots, ~10 seconds
 pytest                                      # offline, no download needed
 ```
 
-Each script uses the newest snapshot in `data/raw/` unless you pass `--snapshot`.
+Each script uses the newest snapshot in `data/raw/` unless you pass `--snapshot`
+(`drift.py` uses the two newest; pass `--old` and `--new` to pick). Part 4 needs
+two downloads taken on different days. The committed Part 1–3 results are for
+snapshot `2026-10-18T1539Z`, so to reproduce them exactly, pass
+`--snapshot data/raw/2026-10-18T1539Z`.
 
 ## Project structure
 
 ```
 checks/pedestrian.yml     the check suite (YAML)
 checks/reports.yml        Part 3: the business reports and the rules that downgrade them
+checks/drift.yml          Part 4: snapshot-to-snapshot checks (YAML, same engine)
 dq/engine.py              check types → SQL, severity, tolerance, suite validation
 dq/load.py                loads a snapshot into DuckDB, freshness reference date, shared views
 dq/report.py              Markdown and CSV output
 dq/completeness.py        Part 2: gap classes, estimates for outage hours, the zero signature
 dq/scorecard.py           Part 3: report rules, window measures, verdicts
+dq/drift.py               Part 4: loads two snapshots side by side, runs the schema checks first
 scripts/download_data.py  snapshot download with metadata and hashes
 scripts/run_checks.py     runs the suite and writes results/
 scripts/completeness.py   Part 2 report, CSVs and charts
 scripts/scorecard.py      Part 3 scorecard
-tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap and scorecard tests
-results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/, SCORECARD.md, scorecard.csv
+scripts/drift.py          Part 4 drift report
+tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap, scorecard and drift tests
+results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/, SCORECARD.md, scorecard.csv, DRIFT.md, drift_results.csv
 ```
 
 ## Roadmap
@@ -259,5 +313,6 @@ results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completen
 - [x] **Part 1:** snapshot download, YAML check engine on DuckDB, 21 checks, Markdown report, offline tests
 - [x] **Part 2:** completeness deep dive: where the missing hours are (time of day, sensors), whether they look like outages or unpublished zero counts, and how much they move hourly averages and daily totals (plus a fix for the daylight-saving hour in Part 1)
 - [x] **Part 3:** a trust scorecard: 7 business reports (yesterday, last complete day, month on month, year on year, street ranking, hourly profile, sensor map), each with rules on check results and on measures over its own window, giving "trusted / use with caveat / don't use" for every snapshot
-- [ ] **Part 4:** snapshot-to-snapshot checks (row-count drift, rewritten history) and a scheduled run
+- [x] **Part 4a:** snapshot-to-snapshot checks: schema, window, deleted / changed / late rows in history, whether the partial day filled and its published hours were final, sensor table changes (10 checks, schema-gated)
+- [ ] **Part 4b:** a scheduled run (GitHub Actions) that downloads, runs the checks, scorecard and drift report, and fails on `error`
 - [ ] Final write-up: TL;DR, recommendations with owners, limitations

@@ -1,0 +1,11 @@
+check_id,table,dimension,severity,status,failing,checked,fail_pct
+drift_counts_schema_same,,consistency,error,pass,0,8,0.000
+drift_sensors_schema_same,,consistency,error,pass,0,11,0.000
+drift_feed_moves_forward,,freshness,error,pass,0,1,0.000
+drift_window_keeps_length,,completeness,warn,pass,0,1,0.000
+drift_settled_rows_kept,,consistency,error,pass,0,1622066,0.000
+drift_settled_counts_unchanged,,consistency,error,pass,0,1622066,0.000
+drift_settled_no_late_rows,,completeness,warn,pass,0,1622066,0.000
+drift_published_hours_final,,consistency,warn,warn,68,354,19.209
+drift_filling_day_completed,,completeness,warn,pass,0,1,0.000
+drift_sensor_table_same,,consistency,warn,pass,0,134,0.000
