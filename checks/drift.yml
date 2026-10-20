@@ -1,0 +1,188 @@
+# Snapshot-to-snapshot checks for the City of Melbourne pedestrian data.
+#
+# Tables (loaded by dq/drift.py from two downloads of the same feed):
+#   old_counts, new_counts        hourly counts in the older and newer snapshot
+#   old_sensors, new_sensors      the sensor table in each
+#   *_columns                     column names and types of each table
+#   overlap_rows                  every sensor-hour on the days both snapshots
+#                                 cover, with old_count and new_count (null =
+#                                 no row) and part: 'filling' for the old
+#                                 snapshot's newest day, 'settled' before it
+#
+# Same engine and rules as checks/pedestrian.yml: every check returns the
+# failing records. error = a report built on the older snapshot can't be
+# trusted to stay as published; warn = expected churn worth knowing about.
+
+checks:
+  # ---- structure --------------------------------------------------------------
+  - id: drift_counts_schema_same
+    type: sql
+    dimension: consistency
+    severity: error
+    sql: >
+      select 'only in old' as side, * from
+        (select * from old_counts_columns except select * from new_counts_columns)
+      union all
+      select 'only in new', * from
+        (select * from new_counts_columns except select * from old_counts_columns)
+    checked_sql: >
+      select count(*) from
+        (select * from old_counts_columns union select * from new_counts_columns)
+    description: >
+      The counts have the same columns and types in both snapshots. A renamed
+      or retyped column breaks every downstream query, usually silently.
+
+  - id: drift_sensors_schema_same
+    type: sql
+    dimension: consistency
+    severity: error
+    sql: >
+      select 'only in old' as side, * from
+        (select * from old_sensors_columns except select * from new_sensors_columns)
+      union all
+      select 'only in new', * from
+        (select * from new_sensors_columns except select * from old_sensors_columns)
+    checked_sql: >
+      select count(*) from
+        (select * from old_sensors_columns union select * from new_sensors_columns)
+    description: The sensor table has the same columns and types in both snapshots.
+
+  - id: drift_feed_moves_forward
+    type: sql
+    dimension: freshness
+    severity: error
+    sql: >
+      select (select max(sensing_date) from old_counts) as old_newest,
+             (select max(sensing_date) from new_counts) as new_newest
+      where (select max(sensing_date) from new_counts)
+            < (select max(sensing_date) from old_counts)
+    checked_sql: select 1
+    description: >
+      The newer snapshot's newest day is not older than the older one's. If
+      it is, the feed was rolled back (or the "newer" download is stale).
+
+  - id: drift_window_keeps_length
+    type: sql
+    dimension: completeness
+    severity: warn
+    sql: >
+      with w as (
+          select (select min(sensing_date) from old_counts) as old_first,
+                 (select max(sensing_date) from old_counts) as old_last,
+                 (select min(sensing_date) from new_counts) as new_first,
+                 (select max(sensing_date) from new_counts) as new_last
+      )
+      select old_first, old_last, new_first, new_last,
+             date_diff('day', old_first, new_first) as days_dropped,
+             date_diff('day', old_last, new_last) as days_added
+      from w
+      where date_diff('day', old_first, new_first) <> date_diff('day', old_last, new_last)
+    checked_sql: select 1
+    description: >
+      The rolling window drops as many days at the start as it adds at the
+      end. If it drops more, history a report used has left the feed; if it
+      drops fewer, the window definition changed.
+
+  # ---- history ----------------------------------------------------------------
+  - id: drift_settled_rows_kept
+    type: sql
+    dimension: consistency
+    severity: error
+    sql: >
+      select location_id, sensing_date, hourday, old_count
+      from overlap_rows where part = 'settled' and new_count is null
+    checked_sql: >
+      select count(*) from overlap_rows where part = 'settled' and old_count is not null
+    description: >
+      No sensor-hour published before the old snapshot's newest day has
+      disappeared. A deleted row lowers every total that included it.
+
+  - id: drift_settled_counts_unchanged
+    type: sql
+    dimension: consistency
+    severity: error
+    sql: >
+      select location_id, sensing_date, hourday, old_count, new_count,
+             new_count - old_count as change
+      from overlap_rows where part = 'settled' and old_count <> new_count
+    checked_sql: >
+      select count(*) from overlap_rows
+      where part = 'settled' and old_count is not null and new_count is not null
+    description: >
+      No count published before the old snapshot's newest day was changed.
+      If history is rewritten, a report from the older snapshot no longer
+      matches the source, and nobody is told.
+
+  - id: drift_settled_no_late_rows
+    type: sql
+    dimension: completeness
+    severity: warn
+    sql: >
+      select location_id, sensing_date, hourday, new_count
+      from overlap_rows where part = 'settled' and old_count is null
+    checked_sql: >
+      select count(*) from overlap_rows where part = 'settled' and new_count is not null
+    description: >
+      No sensor-hour before the old snapshot's newest day arrived late. Late
+      rows mean a gap that looked like an outage (Part 2) was filled later,
+      and totals for those days go up after they were first reported.
+
+  # ---- the day that was still being filled -------------------------------------
+  - id: drift_published_hours_final
+    type: sql
+    dimension: consistency
+    severity: warn
+    sql: >
+      select location_id, sensing_date, hourday, old_count as first_published,
+             new_count as now, new_count - old_count as change
+      from overlap_rows
+      where part = 'filling' and old_count is not null
+        and new_count is distinct from old_count
+    checked_sql: >
+      select count(*) from overlap_rows where part = 'filling' and old_count is not null
+    description: >
+      Counts already published for the old snapshot's newest day are final:
+      the newer snapshot has the same value. If not, an hour that looked
+      complete was still being filled, and an "as of now" figure built on it
+      is too low.
+
+  - id: drift_filling_day_completed
+    type: sql
+    dimension: completeness
+    severity: warn
+    sql: >
+      with daily as (
+          select sensing_date, count(*) as n_rows from new_counts group by sensing_date
+      ),
+      day as (select max(sensing_date) as d from old_counts),
+      usual as (
+          select median(n_rows) as median_rows from daily, day
+          where sensing_date between day.d - 28 and day.d - 1
+      )
+      select day.d as sensing_date, coalesce(daily.n_rows, 0) as rows_now,
+             usual.median_rows as median_rows_previous_28_days
+      from day cross join usual
+      left join daily on daily.sensing_date = day.d
+      where (select max(sensing_date) from new_counts) > day.d
+        and coalesce(daily.n_rows, 0) < 0.9 * usual.median_rows
+    checked_sql: select 1
+    description: >
+      Once the feed has moved on, the old snapshot's newest (partial) day has
+      at least 90% of a usual day's rows. If not, that day stays short and
+      "yesterday" never gets its full total.
+
+  # ---- sensors ----------------------------------------------------------------
+  - id: drift_sensor_table_same
+    type: sql
+    dimension: consistency
+    severity: warn
+    sql: >
+      select 'only in old' as side, * from (select * from old_sensors except select * from new_sensors)
+      union all
+      select 'only in new', * from (select * from new_sensors except select * from old_sensors)
+    checked_sql: >
+      select count(*) from (select * from old_sensors union select * from new_sensors)
+    description: >
+      No sensor was added, removed or edited (name, status, location,
+      installation date). Any change moves sensors in or out of a map or
+      precinct report, so it should be noticed, not discovered.
