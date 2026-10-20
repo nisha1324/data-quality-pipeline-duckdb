@@ -125,6 +125,24 @@ def impute(con: duckdb.DuckDBPyConnection, target: str) -> None:
     """)
 
 
+def estimate_gaps(con: duckdb.DuckDBPyConnection) -> None:
+    """Create table gap_est: every missing hour (from build_gaps) with the
+    count it most likely had. likely_zero -> 0. Outages -> the imputed
+    estimate; if the sensor never published that weekday and hour in the
+    whole snapshot there is nothing to estimate from, and it is counted as 0
+    (flagged as no_history)."""
+    impute(con, "gap_hours")
+    con.execute("""
+        create or replace table gap_est as
+        select g.location_id, g.sensing_date, g.hourday, g.gap_class,
+               i.est is null as no_history,
+               case when g.gap_class = 'likely_zero' then 0
+                    else coalesce(i.est, 0) end as est
+        from gap_hours g join imputed_gap_hours i
+            using (location_id, sensing_date, hourday)
+    """)
+
+
 def zero_signature(con: duckdb.DuckDBPyConnection) -> list[tuple]:
     """For every expected hour whose neighbours on both sides were published,
     how often it is missing, by how busy the busier neighbour was. An outage

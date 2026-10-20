@@ -42,23 +42,6 @@ def pct(a, b) -> str:
     return f"{100 * a / b:.1f}%" if b else "n/a"
 
 
-def estimates(con) -> None:
-    """gap_est: every missing hour with the count it most likely had.
-    likely_zero -> 0. Outages -> the imputed estimate; if the sensor never
-    published that weekday and hour in the whole snapshot there is nothing
-    to estimate from, and it is counted as 0 (flagged as no_history)."""
-    cp.impute(con, "gap_hours")
-    con.execute("""
-        create or replace table gap_est as
-        select g.location_id, g.sensing_date, g.hourday, g.gap_class,
-               i.est is null as no_history,
-               case when g.gap_class = 'likely_zero' then 0
-                    else coalesce(i.est, 0) end as est
-        from gap_hours g join imputed_gap_hours i
-            using (location_id, sensing_date, hourday)
-    """)
-
-
 def class_summary(con) -> dict:
     rows = con.execute("""
         select gap_class, count(*) as gaps, sum(hours) as hours
@@ -191,7 +174,7 @@ def main() -> int:
     cp.build_gaps(con)
     classes = class_summary(con)
     missing = sum(h for _, h in classes.values())
-    estimates(con)
+    cp.estimate_gaps(con)
     city_totals(con)
 
     zeros, ones = con.execute("""
@@ -364,7 +347,7 @@ def main() -> int:
     sens = []
     for q in (2, cp.QUIET_MAX, 10):
         cp.build_gaps(con, quiet_max=q)
-        estimates(con)
+        cp.estimate_gaps(con)
         city_totals(con)
         cs = class_summary(con)
         under = con.execute(
