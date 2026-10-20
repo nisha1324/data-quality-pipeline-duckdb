@@ -1,0 +1,61 @@
+report_id,report,verdict,rule_kind,rule_ref,threshold,rule_verdict,observed,fired
+yesterday,Yesterday's footfall,dont_use,check,counts_grain_unique,status error,dont_use,pass: 0 failing (0.00%),False
+yesterday,Yesterday's footfall,dont_use,check,counts_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+yesterday,Yesterday's footfall,dont_use,check,counts_hour_in_range,status error,dont_use,pass: 0 failing (0.00%),False
+yesterday,Yesterday's footfall,dont_use,check,counts_not_negative,status error,dont_use,pass: 0 failing (0.00%),False
+yesterday,Yesterday's footfall,dont_use,check,counts_fresh,status error,dont_use,pass: 0 failing (0.00%),False
+yesterday,Yesterday's footfall,dont_use,measure,newest_day_rows_pct,< 90,dont_use,15.57 (2026-10-18),True
+last_complete_day,Last complete day's footfall,trusted,check,counts_grain_unique,status error,dont_use,pass: 0 failing (0.00%),False
+last_complete_day,Last complete day's footfall,trusted,check,counts_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+last_complete_day,Last complete day's footfall,trusted,check,counts_hour_in_range,status error,dont_use,pass: 0 failing (0.00%),False
+last_complete_day,Last complete day's footfall,trusted,check,counts_not_negative,status error,dont_use,pass: 0 failing (0.00%),False
+last_complete_day,Last complete day's footfall,trusted,check,counts_fresh,status error,dont_use,pass: 0 failing (0.00%),False
+last_complete_day,Last complete day's footfall,trusted,measure,last_day_rows_pct,< 90,dont_use,101.80 (2026-10-17),False
+last_complete_day,Last complete day's footfall,trusted,measure,last_day_outage_pct,> 1,caveat,0.18 (2026-10-17),False
+last_complete_day,Last complete day's footfall,trusted,measure,last_day_outage_pct,> 5,dont_use,0.18 (2026-10-17),False
+last_complete_day,Last complete day's footfall,trusted,measure,last_day_dropped_sensors,> 0,caveat,0 (none),False
+month_on_month,Month-on-month city-wide trend,trusted,check,counts_grain_unique,status error,dont_use,pass: 0 failing (0.00%),False
+month_on_month,Month-on-month city-wide trend,trusted,check,counts_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+month_on_month,Month-on-month city-wide trend,trusted,check,counts_hour_in_range,status error,dont_use,pass: 0 failing (0.00%),False
+month_on_month,Month-on-month city-wide trend,trusted,check,counts_not_negative,status error,dont_use,pass: 0 failing (0.00%),False
+month_on_month,Month-on-month city-wide trend,trusted,check,counts_fresh,status error,dont_use,pass: 0 failing (0.00%),False
+month_on_month,Month-on-month city-wide trend,trusted,measure,mom_distortion_pts,> 1,caveat,"0.07 (2026-08 vs 2026-09: published +0.9%, gap-filled +1.0%)",False
+month_on_month,Month-on-month city-wide trend,trusted,measure,mom_distortion_pts,> 5,dont_use,"0.07 (2026-08 vs 2026-09: published +0.9%, gap-filled +1.0%)",False
+month_on_month,Month-on-month city-wide trend,trusted,measure,mom_outage_pct,> 1,caveat,"0.32 (2026-08 0.25%, 2026-09 0.32%)",False
+month_on_month,Month-on-month city-wide trend,trusted,measure,mom_sensor_mix_pts,> 1,caveat,0 (2026-08 vs 2026-09: the same sensors in both),False
+month_on_month,Month-on-month city-wide trend,trusted,measure,mom_sensor_mix_pts,> 5,dont_use,0 (2026-08 vs 2026-09: the same sensors in both),False
+year_on_year,Year-on-year city-wide trend,caveat,check,counts_grain_unique,status error,dont_use,pass: 0 failing (0.00%),False
+year_on_year,Year-on-year city-wide trend,caveat,check,counts_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+year_on_year,Year-on-year city-wide trend,caveat,check,counts_hour_in_range,status error,dont_use,pass: 0 failing (0.00%),False
+year_on_year,Year-on-year city-wide trend,caveat,check,counts_not_negative,status error,dont_use,pass: 0 failing (0.00%),False
+year_on_year,Year-on-year city-wide trend,caveat,check,counts_fresh,status error,dont_use,pass: 0 failing (0.00%),False
+year_on_year,Year-on-year city-wide trend,caveat,measure,yoy_distortion_pts,> 1,caveat,"0.40 (2025-09 vs 2026-09: published +3.8%, gap-filled +3.4%)",False
+year_on_year,Year-on-year city-wide trend,caveat,measure,yoy_distortion_pts,> 5,dont_use,"0.40 (2025-09 vs 2026-09: published +3.8%, gap-filled +3.4%)",False
+year_on_year,Year-on-year city-wide trend,caveat,measure,yoy_outage_pct,> 1,caveat,"0.70 (2025-09 0.70%, 2026-09 0.32%)",False
+year_on_year,Year-on-year city-wide trend,caveat,measure,yoy_sensor_mix_pts,> 1,caveat,2.43 (2025-09 vs 2026-09: published +3.8% vs +6.2% over the 97 sensors in both; 5 in only one: (no sensor record) (28); (no sensor record) (78); William St - Little Lonsdale St (West) (108); RMIT Building 22 - 330 Swanston Street (187); …),True
+year_on_year,Year-on-year city-wide trend,caveat,measure,yoy_sensor_mix_pts,> 5,dont_use,2.43 (2025-09 vs 2026-09: published +3.8% vs +6.2% over the 97 sensors in both; 5 in only one: (no sensor record) (28); (no sensor record) (78); William St - Little Lonsdale St (West) (108); RMIT Building 22 - 330 Swanston Street (187); …),False
+street_ranking,"Busiest streets, last 28 days",dont_use,check,counts_grain_unique,status error,dont_use,pass: 0 failing (0.00%),False
+street_ranking,"Busiest streets, last 28 days",dont_use,check,counts_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+street_ranking,"Busiest streets, last 28 days",dont_use,check,counts_hour_in_range,status error,dont_use,pass: 0 failing (0.00%),False
+street_ranking,"Busiest streets, last 28 days",dont_use,check,counts_not_negative,status error,dont_use,pass: 0 failing (0.00%),False
+street_ranking,"Busiest streets, last 28 days",dont_use,check,counts_fresh,status error,dont_use,pass: 0 failing (0.00%),False
+street_ranking,"Busiest streets, last 28 days",dont_use,check,sensors_pk_unique,status error,dont_use,pass: 0 failing (0.00%),False
+street_ranking,"Busiest streets, last 28 days",dont_use,measure,ranking_max_shortfall_pct,> 1,caveat,"40.69 (6 of 99 sensors short by more than 1%: Lygon St (East) (37) 40.7%, ranked 86 vs 74 gap-filled; Birrarung Marr East - Batman Ave Bridge Entry (124) 11.1%, ranked 98 vs 98 gap-filled; COM Pole 1671 - Enterprize Park, Queens Bridge (138) 5.5%, ranked 99 vs 99 gap-filled; …)",True
+street_ranking,"Busiest streets, last 28 days",dont_use,measure,ranking_max_shortfall_pct,> 5,dont_use,"40.69 (6 of 99 sensors short by more than 1%: Lygon St (East) (37) 40.7%, ranked 86 vs 74 gap-filled; Birrarung Marr East - Batman Ave Bridge Entry (124) 11.1%, ranked 98 vs 98 gap-filled; COM Pole 1671 - Enterprize Park, Queens Bridge (138) 5.5%, ranked 99 vs 99 gap-filled; …)",True
+street_ranking,"Busiest streets, last 28 days",dont_use,measure,ranking_partial_sensors,> 0,caveat,0 (none),False
+street_ranking,"Busiest streets, last 28 days",dont_use,measure,window_orphan_sensors,> 0,caveat,0 (none),False
+street_ranking,"Busiest streets, last 28 days",dont_use,measure,window_shared_names,> 0,caveat,"3 (BirBridge_T, FliS_T, Lat526_T)",True
+hourly_profile,"Typical day by hour, last 28 days",dont_use,check,counts_grain_unique,status error,dont_use,pass: 0 failing (0.00%),False
+hourly_profile,"Typical day by hour, last 28 days",dont_use,check,counts_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+hourly_profile,"Typical day by hour, last 28 days",dont_use,check,counts_hour_in_range,status error,dont_use,pass: 0 failing (0.00%),False
+hourly_profile,"Typical day by hour, last 28 days",dont_use,check,counts_not_negative,status error,dont_use,pass: 0 failing (0.00%),False
+hourly_profile,"Typical day by hour, last 28 days",dont_use,check,counts_fresh,status error,dont_use,pass: 0 failing (0.00%),False
+hourly_profile,"Typical day by hour, last 28 days",dont_use,measure,profile_max_overstatement_pct,> 1,caveat,15.25 (worst hour 03:00),True
+hourly_profile,"Typical day by hour, last 28 days",dont_use,measure,profile_max_overstatement_pct,> 5,dont_use,15.25 (worst hour 03:00),True
+sensor_map,Sensor map and list of active sensors,caveat,check,sensors_pk_unique,status error,dont_use,pass: 0 failing (0.00%),False
+sensor_map,Sensor map and list of active sensors,caveat,check,sensors_required_fields,status error,dont_use,pass: 0 failing (0.00%),False
+sensor_map,Sensor map and list of active sensors,caveat,check,sensors_in_city_area,status error,dont_use,pass: 0 failing (0.00%),False
+sensor_map,Sensor map and list of active sensors,caveat,check,sensors_location_type_valid,status error,dont_use,pass: 0 failing (0.00%),False
+sensor_map,Sensor map and list of active sensors,caveat,check,sensors_active_outdoor_reporting,status warn or error,caveat,warn: 1 failing (1.00%),True
+sensor_map,Sensor map and list of active sensors,caveat,check,sensors_name_unique,status warn or error,caveat,warn: 6 failing (4.48%),True
+sensor_map,Sensor map and list of active sensors,caveat,measure,window_orphan_sensors,> 0,caveat,0 (none),False
