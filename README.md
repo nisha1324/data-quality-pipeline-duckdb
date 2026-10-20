@@ -1,6 +1,6 @@
 # Data-quality pipeline on DuckDB: can we trust today's foot-traffic numbers?
 
-> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report) and Part 2 (what the missing hours are and what they do to the numbers) are done. See the [roadmap](#roadmap).
+> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report), Part 2 (what the missing hours are and what they do to the numbers) and Part 3 (a trust scorecard per business report) are done. See the [roadmap](#roadmap).
 
 City teams, retailers, precinct associations and event planners use pedestrian
 counts to judge how busy the city is: whether a campaign or event brought people
@@ -40,6 +40,9 @@ download_data.py ──► data/raw/<snapshot>/  counts.parquet, sensors.parquet
 run_checks.py ──► DuckDB (in memory) ──► checks/pedestrian.yml (21 checks)
                               │
                               └──► results/DQ_REPORT.md, dq_results.csv, snapshot.json
+
+completeness.py ──► gap classes + outage estimates ──► results/completeness.md, charts
+scorecard.py ──► checks + gap estimates + checks/reports.yml ──► results/SCORECARD.md
 ```
 
 - **Checks are declared in YAML** ([`checks/pedestrian.yml`](checks/pedestrian.yml)), like
@@ -57,11 +60,13 @@ run_checks.py ──► DuckDB (in memory) ──► checks/pedestrian.yml (21 c
 - **Freshness is measured against the portal's own processing time**, converted to
   Melbourne time, not against the clock of the machine running the checks, so a rerun
   of an old snapshot gives the same answer.
-- **Tests:** 30 offline tests. One builds a synthetic snapshot with planted defects
+- **Tests:** 49 offline tests. One builds a synthetic snapshot with planted defects
   (colliding ids, an orphan sensor, a missing hour, a dark day, a partial newest day, a
   stopped sensor, a shared sensor name) and checks that the real suite catches each with
   the exact count and passes everything else. Six more check the Part 2 gap
-  classes and estimates on a synthetic sensor with planted gaps.
+  classes and estimates on a synthetic sensor with planted gaps, and 19 check the
+  Part 3 scorecard: rule validation, verdict logic, every measure with exact expected
+  values, and the real report definitions end to end on the synthetic snapshot.
 
 ## Results so far (snapshot 2026-10-18)
 
@@ -172,6 +177,51 @@ stored as one row, and 03:00 that night holds about half the usual count (3,357 
   "sensor online" flag, would end the guesswork between "nobody walked past" and
   "the sensor was off".
 
+## Part 3: trust scorecard (snapshot 2026-10-18)
+
+Full scorecard: [`results/SCORECARD.md`](results/SCORECARD.md) (made by
+[`scripts/scorecard.py`](scripts/scorecard.py) from the report definitions in
+[`checks/reports.yml`](checks/reports.yml); logic in [`dq/scorecard.py`](dq/scorecard.py)).
+
+Parts 1 and 2 say what is wrong with the data. Part 3 turns that into a verdict for
+the reports people actually build on it. Each report has its own time window and a
+list of rules. A rule fires on a check result (for example, a broken key stops every
+count report) or on a **measure over the report's own window**. A check on its own
+can't say this: sensors 28 and 78 fail `counts_sensor_exists` over two years, but they
+stopped long before the last 28 days, so they don't touch a ranking of that period.
+The verdict is the worst rule that fired. Every rule uses the same rule of thumb for
+an error in a figure: **up to 1% is trusted, 1–5% needs a caveat, more than 5% means
+don't use** the report as usually built (plain sums and averages over the published
+rows). Structural problems such as a half-filled day are "don't use" at any size. A
+rule that can't be measured on a snapshot (no previous month, say) gives a caveat,
+never "trusted". The scorecard is rebuilt from scratch for each snapshot.
+
+| Report (window) | Verdict | Why | What to do instead |
+|---|---|---|---|
+| Yesterday's footfall (newest day, 2026-10-18) | ❌ don't use | the newest day has 15.6% of a usual day's rows; it is still being filled | show the last complete day, labelled with its date |
+| Last complete day (2026-10-17) | ✅ trusted | outage hours hold an estimated 0.18% of the day's pedestrians; no sensor dropped out | use as is |
+| Month on month (Sep vs Aug 2026) | ✅ trusted | published +0.9% vs gap-filled +1.0%; the same sensors in both months | use as is |
+| Year on year (Sep 2026 vs Sep 2025) | ⚠️ caveat | 5 sensors report in only one of the two months: the published change is +3.8%, like-for-like over the 97 sensors in both it is **+6.2%** | compare like-for-like |
+| Busiest streets (28 days to 2026-10-17) | ❌ don't use | 6 of 99 sensors are short by more than 1%; Lygon St (East) by an estimated 40.7%, which puts it 86th instead of about 74th; 3 sensor names are shared | rank on gap-filled totals or leave out sensors short by >5%; key on `location_id` |
+| Typical day by hour (same 28 days) | ❌ don't use | a plain average overstates 03:00 by 15.3%, because empty hours mostly aren't published | count likely-zero gaps as 0 (or use medians) |
+| Sensor map / active sensors | ⚠️ caveat | 1 outdoor sensor is marked active but has no counts in the last 7 days; 6 sensors share a name | decide "working" from the counts, not the status field |
+
+**What this means for the business (Part 3):**
+- The city-wide numbers for the last complete day and the last month can go out as
+  they are today. Two reports that often sit on a dashboard's front page,
+  "yesterday" and the "typical day" chart, can't go out as usually built. The fix for
+  each is small (use the day before; count quiet gaps as 0).
+- The year-on-year comparison understates growth: +3.8% on the published totals,
+  +6.2% over the same 97 sensors. A sensor network that changes over a year needs a
+  like-for-like comparison, the same way retailers compare like-for-like stores.
+- Street rankings need a coverage column. One sensor with a regular afternoon outage
+  sits about 12 places lower than it should.
+- The verdicts change with the data. Month on month is trusted for September, but the
+  same rules applied to July vs June 2026 give a caveat: June's total is short by an
+  estimated 3.7% and the published change (+15.0%) is 3.8 points above the
+  gap-filled one (+11.2%), because Bourke Street Mall came back online. That is why
+  the scorecard is rebuilt for every snapshot instead of being a one-off review.
+
 ## How to run
 
 ```bash
@@ -180,30 +230,34 @@ pip install -r requirements.txt
 python scripts/download_data.py             # ~26 MB, a few minutes; saves data/raw/<snapshot>/
 python scripts/run_checks.py                # writes results/; add --fail-on error to gate a pipeline
 python scripts/completeness.py              # Part 2: gap analysis, ~1 minute
+python scripts/scorecard.py                 # Part 3: trust scorecard per report, ~30 seconds
 pytest                                      # offline, no download needed
 ```
 
-`run_checks.py` uses the newest snapshot in `data/raw/` unless you pass `--snapshot`.
+Each script uses the newest snapshot in `data/raw/` unless you pass `--snapshot`.
 
 ## Project structure
 
 ```
 checks/pedestrian.yml     the check suite (YAML)
+checks/reports.yml        Part 3: the business reports and the rules that downgrade them
 dq/engine.py              check types → SQL, severity, tolerance, suite validation
 dq/load.py                loads a snapshot into DuckDB, freshness reference date, shared views
 dq/report.py              Markdown and CSV output
 dq/completeness.py        Part 2: gap classes, estimates for outage hours, the zero signature
+dq/scorecard.py           Part 3: report rules, window measures, verdicts
 scripts/download_data.py  snapshot download with metadata and hashes
 scripts/run_checks.py     runs the suite and writes results/
 scripts/completeness.py   Part 2 report, CSVs and charts
-tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap tests
-results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/
+scripts/scorecard.py      Part 3 scorecard
+tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap and scorecard tests
+results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/, SCORECARD.md, scorecard.csv
 ```
 
 ## Roadmap
 
 - [x] **Part 1:** snapshot download, YAML check engine on DuckDB, 21 checks, Markdown report, offline tests
 - [x] **Part 2:** completeness deep dive: where the missing hours are (time of day, sensors), whether they look like outages or unpublished zero counts, and how much they move hourly averages and daily totals (plus a fix for the daylight-saving hour in Part 1)
-- [ ] **Part 3:** a trust scorecard: map each business report (city-wide trend, yesterday's footfall, street ranking, sensor map, hourly profile) to the checks it depends on, and generate "trusted / use with caveat / don't use" for every snapshot
+- [x] **Part 3:** a trust scorecard: 7 business reports (yesterday, last complete day, month on month, year on year, street ranking, hourly profile, sensor map), each with rules on check results and on measures over its own window, giving "trusted / use with caveat / don't use" for every snapshot
 - [ ] **Part 4:** snapshot-to-snapshot checks (row-count drift, rewritten history) and a scheduled run
 - [ ] Final write-up: TL;DR, recommendations with owners, limitations
