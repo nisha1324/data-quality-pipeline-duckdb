@@ -1,0 +1,23 @@
+# Errors that have been looked at and accepted, so the daily gate
+# (scripts/gate.py) doesn't fail on them every day.
+#
+# Each entry names an error check from checks/pedestrian.yml or
+# checks/drift.yml and an accept_where condition on that check's failing
+# records (the rows its query returns). Only the records the condition covers
+# are accepted: if the check fails for anything else, the gate still fails.
+# Keep the condition as narrow as the problem, and say who owns the fix.
+#
+# When a known issue stops firing, the gate lists it as resolved: delete the
+# entry then, so the problem is caught if it comes back.
+
+known_issues:
+  - check: counts_sensor_exists
+    accept_where: location_id in (28, 78)
+    owner: Data engineering (raise with the City of Melbourne open data team)
+    since: 2026-10-19
+    reason: >
+      Sensors 28 and 78 stopped reporting on 2025-11-20 and 2026-02-13 and
+      have no record in the sensor table, so their counts have no name or
+      location. Reports that join counts to sensors silently drop them, while
+      city-wide totals keep them (Part 1). Their rows
+      leave the two-year window by 2027-11-20 and 2028-02-13.
