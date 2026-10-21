@@ -2,7 +2,7 @@
 
 [![Daily data-quality gate](https://github.com/nisha1324/data-quality-pipeline-duckdb/actions/workflows/daily-gate.yml/badge.svg)](https://github.com/nisha1324/data-quality-pipeline-duckdb/actions/workflows/daily-gate.yml)
 
-> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report), Part 2 (what the missing hours are and what they do to the numbers), Part 3 (a trust scorecard per business report) and Part 4 (snapshot-to-snapshot checks and a daily gate on GitHub Actions) are done. The final write-up is next. See the [roadmap](#roadmap).
+> **Status: complete.** Four parts: a YAML check engine on DuckDB with 21 checks (Part 1), what the missing hours are and what they do to the numbers (Part 2), a trust scorecard for 7 business reports (Part 3), and snapshot-to-snapshot checks with a daily gate on GitHub Actions (Part 4). 69 offline tests. [Recommendations](#recommendations) and [limitations](#limitations) are at the end.
 
 City teams, retailers, precinct associations and event planners use pedestrian
 counts to judge how busy the city is: whether a campaign or event brought people
@@ -14,6 +14,32 @@ answer one business question:
 
 **Which foot-traffic reports can the business trust today, and which need a caveat
 or shouldn't be used?**
+
+## TL;DR
+
+- **Of 7 common foot-traffic reports, 2 can go out as built, 2 need a caveat and 3
+  shouldn't be used** (snapshot 2026-10-18). Trusted: the last complete day and month on
+  month (Sep vs Aug 2026: +0.9% published, +1.0% gap-filled). Don't use: "yesterday"
+  (the newest day has 15.6% of a usual day's rows), the busiest-streets ranking (one
+  sensor short by an estimated 40.7%) and the typical-day-by-hour chart (03:00 overstated
+  by 15.3%). Each has a small fix ([Part 3](#part-3-trust-scorecard-snapshot-2026-10-18)).
+- **The feed's `id` isn't a key, and two sensors have no record.** 8.30% of rows share
+  an `id` with a different sensor, because it is sensor, hour and date run together with
+  no separator. 20,472 rows from retired sensors 28 and 78 have no sensor record, so a
+  map or street report and a city-wide total disagree for the same period.
+- **Most missing hours are zeros the feed didn't publish; the rest are outages that move
+  monthly totals.** 5.67% of expected sensor-hours are missing, 68% of them between
+  midnight and 6 am, and 43.0% look like empty hours left out (the description says they
+  are shown as 0). Outages hide an estimated 1.43% of pedestrians over two years but up
+  to 4.06% in a month, mostly from one sensor: Bourke Street Mall (North), dark from
+  Nov 2025 to Jun 2026.
+- **Year-on-year growth is understated:** +3.8% on the published totals, **+6.2%**
+  like-for-like over the 97 sensors that reported in both Septembers.
+- **History didn't change between downloads, but the last published hour did.** All
+  1,622,066 settled sensor-hours were identical in two snapshots 48 hours apart (and
+  1,624,531 in the next pair). The newest day's 03:00 total was 39.9% low when first
+  published (43.5% in the next pair). A daily GitHub Actions gate now reruns
+  everything and goes red only on an error nobody has reviewed.
 
 ## Data
 
@@ -80,7 +106,7 @@ daily on GitHub Actions: cached last snapshot + download ──► checks, score
   inside an accepted check, a condition that evaluates to null accepts nothing, and the
   known-issues file is validated.
 
-## Results so far (snapshot 2026-10-18)
+## Part 1: check results (snapshot 2026-10-18)
 
 **21 checks: 12 pass, 8 warn, 1 error.** Full report: [`results/DQ_REPORT.md`](results/DQ_REPORT.md).
 
@@ -319,8 +345,17 @@ checks give 9 pass and 1 warn. On GitHub Actions, the first manual run (2026-10-
 took 5 minutes, found no cached snapshot, downloaded `2026-10-20T1538Z`, skipped the
 drift checks (as `GATE.md` says) and passed with the one known issue accepted. A second
 run restored that snapshot from the cache. The portal hadn't published since, so it
-skipped the download and passed again. From the first scheduled run on, each run
-compares two consecutive days.
+skipped the download and passed again.
+
+The first run with two snapshots
+([2026-10-21](https://github.com/nisha1324/data-quality-pipeline-duckdb/actions/runs/39629229612),
+`2026-10-21T1538Z` against the cached `2026-10-20T1538Z`, 24 hours apart) passed and
+repeated the Part 4 pattern on a new pair. All 1,624,531 settled sensor-hours were
+identical. The newest day's 03:00 had been revised for 52 sensors, and its first total
+was 43.5% low. The 7 verdicts were the same as for 2026-10-18. (That run first failed at the
+download step because the runner installed DuckDB 2.0, which removed a call the
+download script used. The script now uses one that works on both, and
+`requirements.txt` keeps DuckDB below 2.0, the version the published results came from.)
 
 **What this means for the business (Part 4b):**
 - A red run means something new: an error nobody has accepted, such as a new sensor
@@ -335,6 +370,28 @@ compares two consecutive days.
   the day it happens and not again. GitHub pauses scheduled workflows in a public repo
   after 60 days without repository activity, and drops cache entries unused for 7 days, so after a
   pause the first run has nothing to compare with and says so.
+
+## Recommendations
+
+Ranked by how wrong a report is today if nothing changes, and how often people look at
+it. Each is tied to a measured figure above. Owners are roles: the data has no
+organisation chart. The last one is for the publisher, the City of Melbourne.
+
+| # | Recommendation | Why (measured) | Owner |
+|---|---|---|---|
+| 1 | **Never label the newest day "yesterday".** Show the last complete day with its date, and stop any "latest hour" figure one hour before the last published hour. Treat a day as final once the feed has moved past it. | The newest day has 15.6% of a usual day's rows, so a "yesterday vs last week" tile shows a fall of about 84% that isn't real (Part 1). Its last published hour was revised up for 68 of 74 sensors, and the first 03:00 total was 39.9% low (Part 4). Settled days didn't change at all. | Dashboard / BI owner |
+| 2 | **Compare periods like-for-like or gap-filled, and show the coverage next to every total.** | Year on year: +3.8% published vs +6.2% over the same 97 sensors (Part 3). July vs June 2026: +15.0% published vs +11.2% gap-filled, because Bourke Street Mall came back online. Monthly totals are short by 0.20–4.06% (Part 2). | Insights / reporting lead |
+| 3 | **Join on sensor + date + hour and `location_id`, never on `id` or the sensor name.** Add both rules to the data model's tests. | 135,070 rows (8.30%) share an `id` with a different sensor, and 3 sensor names are each used by 2 sensors (Part 1). A join on either silently adds sensors together. | Data engineer |
+| 4 | **Count likely-zero gaps as 0 in hourly profiles** (or use medians), so late-night footfall isn't overstated. | A plain average overstates 01:00–04:00 by 9.0–15.3% over two years, and 03:00 by 15.3% in the last 28 days (Parts 2–3). Daytime hours move by at most 0.16%. | Analysts (night-time economy, events) |
+| 5 | **Rank streets on gap-filled totals, or leave out sensors short by more than 5%.** | 6 of 99 sensors are short by more than 1% over 28 days. Lygon St (East) is short by an estimated 40.7%, which puts it 86th instead of about 74th (Part 3), because of a 9-hour afternoon outage that recurs (218 times over two years, Part 2). | Dashboard / BI owner |
+| 6 | **Keep the daily gate, the scorecard and the known-issues review as the release check for these reports.** Read a red run before the morning's numbers go out, and remove a known issue once the publisher fixes it. | Verdicts change with the data: month on month is trusted for Sep vs Aug but gets a caveat for Jul vs Jun (Part 3). A count baseline can't replace the reviewed list: the accepted rows fell 20,472 → 20,376 in 48 hours, so a new problem could hide under the old count (Part 4b). | Data team lead |
+| 7 | **Decide which sensors are working from the counts, not the status field.** | Sensor 108 has had no counts since 2026-07-08 but is still marked active (Parts 1 and 3). A map of "active sensors" built on the status shows it as live. | Data engineer |
+| 8 | **Ask the publisher for four fixes:** publish empty hours as 0 or add a "sensor online" flag; add records (or a retired status) for sensors 28 and 78; give `id` a separator or drop it; update the description (refreshed daily, directional counts included). | 43.0% of missing hours look like unpublished zeros, against the description (Part 2). 20,472 rows have no sensor record, and 8.30% of `id`s collide (Part 1). Each fix removes a rule or a known issue from this pipeline. | Data team lead, with the City of Melbourne open data team |
+
+**Data that would sharpen this.** A "sensor online" flag or maintenance log (turns
+"likely zero" into a fact), the history of corrections the publisher has made (whether
+settled days ever change weeks later), and the reports' real audiences and decisions
+(to set the 1% / 5% thresholds per report instead of one rule of thumb).
 
 ## How to run
 
@@ -390,4 +447,38 @@ results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completen
 - [x] **Part 3:** a trust scorecard: 7 business reports (yesterday, last complete day, month on month, year on year, street ranking, hourly profile, sensor map), each with rules on check results and on measures over its own window, giving "trusted / use with caveat / don't use" for every snapshot
 - [x] **Part 4a:** snapshot-to-snapshot checks: schema, window, deleted / changed / late rows in history, whether the partial day filled and its published hours were final, sensor table changes (10 checks, schema-gated)
 - [x] **Part 4b:** a daily GitHub Actions run that restores the last snapshot from the cache, downloads today's, writes the check, scorecard and drift reports, and fails on any `error` not covered by a reviewed known issue (`checks/known_issues.yml`)
-- [ ] Final write-up: TL;DR, recommendations with owners, limitations
+- [x] Final write-up: TL;DR, ranked recommendations with owners, limitations
+
+Possible extensions: replay the scorecard as of past month-ends for a timeline of
+verdicts; keep each day's gate report to measure how often settled history is
+rewritten over months; check the results on DuckDB 2.0 and lift the version cap;
+run the same engine on a second open-data feed.
+
+## Limitations
+
+- **One feed, one main snapshot, two pairs.** Parts 1–3 are measured on snapshot
+  `2026-10-18T1539Z`, and the drift results on two pairs of downloads (48 and 24 hours
+  apart). The daily gate adds a comparison every day from now on, but there is no
+  record of corrections made before this project started, and run reports are kept
+  for only 30 days.
+- **"Likely zero" is an inference.** The feed has no "sensor online" flag, so a gap is
+  classed from the readings around it. Moving the quiet threshold from 2 to 10 people an
+  hour shifts hours between classes, but the city-wide shortfall stays at 1.43–1.44%.
+- **Outage estimates size a shortfall; they don't replace a reading.** Back-tested on
+  published hours, the median error is 13.4% for one hour and 7.7% for a sensor-day
+  (90th percentile 27.6%).
+- **The scorecard's thresholds are a rule of thumb.** Up to 1% trusted, 1–5% caveat,
+  more than 5% don't use is one rule for every report, chosen for this project rather
+  than taken from a standard. The 7 reports are typical uses of this feed, not a
+  particular organisation's dashboard, and the rules were set and reviewed on the same
+  snapshot.
+- **The gate compares each run with the one before.** A rewrite is flagged on the day it
+  happens and not again. GitHub pauses scheduled workflows after 60 days without
+  repository activity and drops cache entries unused for 7 days.
+- **Unexplained:** 03:00 on the night daylight saving ends holds about half the usual
+  count (Part 2). The cause isn't documented, so it is reported, not corrected.
+- **Scope.** The 34 indoor sensors have no counts in this dataset. The engine covers
+  the ideas behind dbt tests and Great Expectations (declarative checks, severity,
+  failing records as SQL), not their tooling: no lineage, no UI, one machine.
+- **Versions.** The committed results were produced with DuckDB 1.5.6, and
+  `requirements.txt` keeps DuckDB below 2.0 until they are rechecked on it.
