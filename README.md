@@ -1,6 +1,8 @@
 # Data-quality pipeline on DuckDB: can we trust today's foot-traffic numbers?
 
-> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report), Part 2 (what the missing hours are and what they do to the numbers), Part 3 (a trust scorecard per business report) and the snapshot-to-snapshot checks of Part 4 are done. See the [roadmap](#roadmap).
+[![Daily data-quality gate](https://github.com/nisha1324/data-quality-pipeline-duckdb/actions/workflows/daily-gate.yml/badge.svg)](https://github.com/nisha1324/data-quality-pipeline-duckdb/actions/workflows/daily-gate.yml)
+
+> **Status: in progress.** Part 1 (download, check engine, the first 21 checks and report), Part 2 (what the missing hours are and what they do to the numbers), Part 3 (a trust scorecard per business report) and Part 4 (snapshot-to-snapshot checks and a daily gate on GitHub Actions) are done. The final write-up is next. See the [roadmap](#roadmap).
 
 City teams, retailers, precinct associations and event planners use pedestrian
 counts to judge how busy the city is: whether a campaign or event brought people
@@ -44,6 +46,9 @@ run_checks.py ──► DuckDB (in memory) ──► checks/pedestrian.yml (21 c
 completeness.py ──► gap classes + outage estimates ──► results/completeness.md, charts
 scorecard.py ──► checks + gap estimates + checks/reports.yml ──► results/SCORECARD.md
 drift.py ──► two snapshots side by side ──► checks/drift.yml (10 checks) ──► results/DRIFT.md
+gate.py ──► checks + drift + checks/known_issues.yml ──► results/GATE.md, exit 1 on a new error
+
+daily on GitHub Actions: cached last snapshot + download ──► checks, scorecard, drift, gate
 ```
 
 - **Checks are declared in YAML** ([`checks/pedestrian.yml`](checks/pedestrian.yml)), like
@@ -61,7 +66,7 @@ drift.py ──► two snapshots side by side ──► checks/drift.yml (10 che
 - **Freshness is measured against the portal's own processing time**, converted to
   Melbourne time, not against the clock of the machine running the checks, so a rerun
   of an old snapshot gives the same answer.
-- **Tests:** 56 offline tests. One builds a synthetic snapshot with planted defects
+- **Tests:** 69 offline tests. One builds a synthetic snapshot with planted defects
   (colliding ids, an orphan sensor, a missing hour, a dark day, a partial newest day, a
   stopped sensor, a shared sensor name) and checks that the real suite catches each with
   the exact count and passes everything else. Six more check the Part 2 gap
@@ -70,7 +75,10 @@ drift.py ──► two snapshots side by side ──► checks/drift.yml (10 che
   values, and the real report definitions end to end on the synthetic snapshot.
   Seven check the Part 4 drift suite on a synthetic pair of snapshots with planted
   drift (a deleted, a changed and a late row in history, a revised and a vanished
-  hour on the partial day, an edited sensor, a renamed column).
+  hour on the partial day, an edited sensor, a renamed column). Thirteen check the
+  Part 4b gate: an accepted error passes, a new sensor without a record still fails
+  inside an accepted check, a condition that evaluates to null accepts nothing, and the
+  known-issues file is validated.
 
 ## Results so far (snapshot 2026-10-18)
 
@@ -265,8 +273,68 @@ The new snapshot ends the same way: its newest day, 2026-10-20, again stops afte
   partial-day finding, the rule for a dashboard is to **treat a day as final only
   once the feed has moved past it**.
 - History being stable is a result for this pair of snapshots, not a guarantee. One
-  pair 48 hours apart can't show a correction made weeks later. The next step runs
-  the same comparison on a schedule, so that a rewrite is caught the day it happens.
+  pair 48 hours apart can't show a correction made weeks later. Part 4b runs the
+  same comparison every day, so that a rewrite is caught the day it happens.
+
+### Part 4b: a daily gate on GitHub Actions
+
+[`.github/workflows/daily-gate.yml`](.github/workflows/daily-gate.yml) runs every day
+at 17:45 UTC (04:45 in Melbourne during daylight saving), about two hours after the
+portal reprocesses the counts. It can also be started by hand. Each run:
+
+1. runs the 69 offline tests;
+2. restores the previous run's snapshot from the Actions cache (one snapshot, ~26 MB;
+   no data is committed to the repo);
+3. downloads today's snapshot (row counts checked against the portal, ~4 minutes);
+4. writes the check report, the trust scorecard and, if the cache held an older
+   snapshot, the drift report;
+5. runs the gate ([`scripts/gate.py`](scripts/gate.py), [`dq/gate.py`](dq/gate.py)) and
+   shows its one-page `GATE.md` as the job summary;
+6. keeps only today's snapshot in the cache for the next run and uploads all reports
+   as an artifact (kept 30 days);
+7. fails the job if the gate failed, so GitHub's failure email is the alert.
+
+**Why "fail on error" needs a known-issues list.** Every snapshot so far has one
+error: sensors 28 and 78 have counts but no sensor record (Part 1), and their rows stay
+in the two-year window until late 2027 and early 2028. A job that is red every day
+gets ignored. So [`checks/known_issues.yml`](checks/known_issues.yml) lists the errors
+that have been looked at. Each entry has an owner, a start date, a reason and an
+`accept_where` condition on the check's failing records (here `location_id in (28, 78)`).
+The gate counts the failing records the condition doesn't cover, and any such record
+fails the run. That is stricter than a count baseline ("at most 20,472 failing rows"),
+which this feed would defeat: the accepted rows fell by 96 in the 48 hours between the
+two snapshots as the oldest days left the window, and a new sensor without a record
+adds at most 24 rows a day, so its rows would never lift the total back over the old
+figure. A test plants exactly that: 3 rows from a new sensor next to 939 accepted ones,
+and the gate fails. Other rules: only `error` checks can be accepted (warnings never
+fail the gate; they are in the reports), entries are validated against the check
+suites so a typo can't accept anything, a condition that evaluates to null accepts
+nothing, and a known issue whose check passes again is listed as resolved so the entry
+can be deleted.
+
+**First runs.** [`results/GATE.md`](results/GATE.md) is the gate for the Part 4 pair
+(`2026-10-20T1538Z` against `2026-10-18T1539Z`): pass. 21 checks give 12 pass, 8 warn
+and 1 error (the known issue: 20,376 rows, all from sensors 28 and 78), and 10 drift
+checks give 9 pass and 1 warn. On GitHub Actions, the first manual run (2026-10-21)
+took 5 minutes, found no cached snapshot, downloaded `2026-10-20T1538Z`, skipped the
+drift checks (as `GATE.md` says) and passed with the one known issue accepted. A second
+run restored that snapshot from the cache. The portal hadn't published since, so it
+skipped the download and passed again. From the first scheduled run on, each run
+compares two consecutive days.
+
+**What this means for the business (Part 4b):**
+- A red run means something new: an error nobody has accepted, such as a new sensor
+  without a record, a changed schema, rewritten history or a stalled feed. It is not
+  the same known problem again, so the alert is worth reading.
+- Accepting a problem is a reviewed change, not a silent ignore. The entry sits in
+  version control with an owner, a date, a reason and the exact records it covers, and
+  removing it once the publisher fixes the data is part of the same process.
+- Every morning (Melbourne time), the job summary answers the project's question in
+  one page: which reports to use today.
+- Limits: drift compares each run with the one before it, so a rewrite is flagged on
+  the day it happens and not again. GitHub pauses scheduled workflows in a public repo
+  after 60 days without repository activity, and drops cache entries unused for 7 days, so after a
+  pause the first run has nothing to compare with and says so.
 
 ## How to run
 
@@ -278,11 +346,14 @@ python scripts/run_checks.py                # writes results/; add --fail-on err
 python scripts/completeness.py              # Part 2: gap analysis, ~1 minute
 python scripts/scorecard.py                 # Part 3: trust scorecard per report, ~30 seconds
 python scripts/drift.py                     # Part 4: compare the two newest snapshots, ~10 seconds
+python scripts/gate.py --previous data/raw/<older snapshot>   # Part 4b: exit 1 on a new error, ~30 seconds
 pytest                                      # offline, no download needed
 ```
 
 Each script uses the newest snapshot in `data/raw/` unless you pass `--snapshot`
-(`drift.py` uses the two newest; pass `--old` and `--new` to pick). Part 4 needs
+(`drift.py` uses the two newest; pass `--old` and `--new` to pick; `gate.py` runs the
+drift checks only when given `--previous`). All except `completeness.py` take `--out`
+to write somewhere other than `results/`. Part 4 needs
 two downloads taken on different days. The committed Part 1–3 results are for
 snapshot `2026-10-18T1539Z`, so to reproduce them exactly, pass
 `--snapshot data/raw/2026-10-18T1539Z`.
@@ -293,19 +364,23 @@ snapshot `2026-10-18T1539Z`, so to reproduce them exactly, pass
 checks/pedestrian.yml     the check suite (YAML)
 checks/reports.yml        Part 3: the business reports and the rules that downgrade them
 checks/drift.yml          Part 4: snapshot-to-snapshot checks (YAML, same engine)
+checks/known_issues.yml   Part 4b: accepted errors, each with an owner, a reason and the records it covers
 dq/engine.py              check types → SQL, severity, tolerance, suite validation
 dq/load.py                loads a snapshot into DuckDB, freshness reference date, shared views
 dq/report.py              Markdown and CSV output
 dq/completeness.py        Part 2: gap classes, estimates for outage hours, the zero signature
 dq/scorecard.py           Part 3: report rules, window measures, verdicts
 dq/drift.py               Part 4: loads two snapshots side by side, runs the schema checks first
+dq/gate.py                Part 4b: known-issue validation and the pass/fail decision
 scripts/download_data.py  snapshot download with metadata and hashes
 scripts/run_checks.py     runs the suite and writes results/
 scripts/completeness.py   Part 2 report, CSVs and charts
 scripts/scorecard.py      Part 3 scorecard
 scripts/drift.py          Part 4 drift report
-tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap, scorecard and drift tests
-results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/, SCORECARD.md, scorecard.csv, DRIFT.md, drift_results.csv
+scripts/gate.py           Part 4b daily gate
+.github/workflows/        daily-gate.yml: the scheduled run
+tests/                    engine tests, the suite on a synthetic snapshot with planted defects, gap, scorecard, drift and gate tests
+results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completeness.md + CSVs, charts/, SCORECARD.md, scorecard.csv, DRIFT.md, drift_results.csv, GATE.md
 ```
 
 ## Roadmap
@@ -314,5 +389,5 @@ results/                  DQ_REPORT.md, dq_results.csv, snapshot.json, completen
 - [x] **Part 2:** completeness deep dive: where the missing hours are (time of day, sensors), whether they look like outages or unpublished zero counts, and how much they move hourly averages and daily totals (plus a fix for the daylight-saving hour in Part 1)
 - [x] **Part 3:** a trust scorecard: 7 business reports (yesterday, last complete day, month on month, year on year, street ranking, hourly profile, sensor map), each with rules on check results and on measures over its own window, giving "trusted / use with caveat / don't use" for every snapshot
 - [x] **Part 4a:** snapshot-to-snapshot checks: schema, window, deleted / changed / late rows in history, whether the partial day filled and its published hours were final, sensor table changes (10 checks, schema-gated)
-- [ ] **Part 4b:** a scheduled run (GitHub Actions) that downloads, runs the checks, scorecard and drift report, and fails on `error`
+- [x] **Part 4b:** a daily GitHub Actions run that restores the last snapshot from the cache, downloads today's, writes the check, scorecard and drift reports, and fails on any `error` not covered by a reviewed known issue (`checks/known_issues.yml`)
 - [ ] Final write-up: TL;DR, recommendations with owners, limitations
