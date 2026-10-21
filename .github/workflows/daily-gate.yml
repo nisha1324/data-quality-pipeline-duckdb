@@ -1,0 +1,101 @@
+name: Daily data-quality gate
+
+on:
+  schedule:
+    - cron: "45 17 * * *"   # daily; the portal reprocesses the counts at about 15:40 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-gate
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Offline tests
+        run: pytest -q
+
+      # The cache holds one snapshot: the one the last run downloaded (~26 MB).
+      - name: Restore the previous snapshot
+        uses: actions/cache/restore@v6
+        with:
+          path: data/raw
+          key: pedestrian-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: pedestrian-snapshot-
+
+      - name: Download today's snapshot
+        run: python scripts/download_data.py
+
+      - name: Find today's and the previous snapshot
+        run: |
+          # snapshot folders are named after a UTC timestamp, so they sort by time
+          snaps=()
+          for d in $(ls -d data/raw/*/ | sort); do
+            if [ -f "$d/source.json" ]; then snaps+=("${d%/}"); fi
+          done
+          echo "NEW=${snaps[-1]}" >> "$GITHUB_ENV"
+          echo "NAME=$(basename "${snaps[-1]}")" >> "$GITHUB_ENV"
+          if [ ${#snaps[@]} -ge 2 ]; then
+            echo "OLD=${snaps[-2]}" >> "$GITHUB_ENV"
+          fi
+          echo "snapshots: ${snaps[*]}"
+
+      - name: Check suite report
+        run: python scripts/run_checks.py --snapshot "$NEW" --out ci-results
+
+      - name: Trust scorecard
+        run: python scripts/scorecard.py --snapshot "$NEW" --out ci-results
+
+      - name: Drift report against the previous snapshot
+        if: env.OLD != ''
+        run: python scripts/drift.py --old "$OLD" --new "$NEW" --out ci-results
+
+      # The gate's result is kept and acted on last, so the snapshot is still
+      # cached and the reports still uploaded on a day the gate fails.
+      - name: Gate
+        id: gate
+        run: |
+          set +e
+          python scripts/gate.py --snapshot "$NEW" ${OLD:+--previous "$OLD"} --out ci-results
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          [ -f ci-results/GATE.md ] && cat ci-results/GATE.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Keep only today's snapshot for the next run
+        run: find data/raw -mindepth 1 -maxdepth 1 -type d ! -path "$NEW" -exec rm -rf {} +
+
+      - name: Save today's snapshot for the next run
+        uses: actions/cache/save@v6
+        with:
+          path: data/raw
+          key: pedestrian-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dq-reports-${{ env.NAME || github.run_id }}
+          path: ci-results/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Fail if the gate failed
+        if: steps.gate.outputs.status != '0'
+        run: |
+          echo "The gate found errors that no known issue covers; see the job summary."
+          exit 1
