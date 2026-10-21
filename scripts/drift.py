@@ -5,7 +5,8 @@ Usage:
     python scripts/drift.py --old data/raw/2026-10-18T1539Z --new data/raw/2026-10-20T1538Z
     python scripts/drift.py --fail-on error       # exit 1 if any check errors
 
-Outputs (in results/): DRIFT.md and drift_results.csv.
+Outputs (in results/, or the folder given with --out): DRIFT.md and
+drift_results.csv.
 """
 from pathlib import Path
 import argparse
@@ -106,6 +107,8 @@ def main() -> int:
     parser.add_argument("--suite", type=Path, default=ROOT / "checks" / "drift.yml")
     parser.add_argument("--fail-on", choices=["warn", "error"],
                         help="exit with status 1 if any check ends at this level or worse")
+    parser.add_argument("--out", type=Path, default=RESULTS,
+                        help="folder for the outputs (default: results/)")
     args = parser.parse_args()
 
     if bool(args.old) != bool(args.new):
@@ -114,9 +117,9 @@ def main() -> int:
     con, params = drift.load_pair(old, new)
     results, skipped = drift.run_drift(con, load_suite(args.suite), params)
 
-    RESULTS.mkdir(exist_ok=True)
-    write_csv(results, RESULTS / "drift_results.csv")
-    write_markdown(con, results, skipped, params, RESULTS / "DRIFT.md")
+    args.out.mkdir(parents=True, exist_ok=True)
+    write_csv(results, args.out / "drift_results.csv")
+    write_markdown(con, results, skipped, params, args.out / "DRIFT.md")
 
     for r in results:
         print(f"{r.status:5}  {r.check.id:32} {r.failing:>9,} / {r.checked:,}")

@@ -8,8 +8,8 @@ Usage:
     python scripts/scorecard.py                  # newest snapshot in data/raw/
     python scripts/scorecard.py --snapshot data/raw/2026-10-18T1539Z
 
-Outputs (in results/): SCORECARD.md and scorecard.csv (one row per report
-and rule).
+Outputs (in results/, or the folder given with --out): SCORECARD.md and
+scorecard.csv (one row per report and rule).
 """
 from pathlib import Path
 import argparse
@@ -99,6 +99,8 @@ def main() -> int:
     parser.add_argument("--snapshot", type=Path, help="snapshot folder (default: newest)")
     parser.add_argument("--suite", type=Path, default=ROOT / "checks" / "pedestrian.yml")
     parser.add_argument("--reports", type=Path, default=ROOT / "checks" / "reports.yml")
+    parser.add_argument("--out", type=Path, default=RESULTS,
+                        help="folder for the outputs (default: results/)")
     args = parser.parse_args()
 
     snapshot = args.snapshot or latest_snapshot()
@@ -111,9 +113,9 @@ def main() -> int:
     reports, notes = sc.load_reports(args.reports, set(results), set(measures))
     verdicts = sc.evaluate(reports, results, measures)
 
-    RESULTS.mkdir(exist_ok=True)
-    write_csv(verdicts, RESULTS / "scorecard.csv")
-    write_markdown(verdicts, notes, params, sc.windows(con), RESULTS / "SCORECARD.md")
+    args.out.mkdir(parents=True, exist_ok=True)
+    write_csv(verdicts, args.out / "scorecard.csv")
+    write_markdown(verdicts, notes, params, sc.windows(con), args.out / "SCORECARD.md")
     for v in verdicts:
         print(f"{v.verdict:9} {v.report.name}")
     return 0

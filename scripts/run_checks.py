@@ -5,9 +5,9 @@ Usage:
     python scripts/run_checks.py --snapshot data/raw/2026-10-18T1539Z
     python scripts/run_checks.py --fail-on error  # exit 1 if any check errors
 
-Outputs (in results/): DQ_REPORT.md, dq_results.csv and snapshot.json (the
-snapshot's source metadata, so the report can be traced to what was
-downloaded).
+Outputs (in results/, or the folder given with --out): DQ_REPORT.md,
+dq_results.csv and snapshot.json (the snapshot's source metadata, so the
+report can be traced to what was downloaded).
 """
 from pathlib import Path
 import argparse
@@ -30,6 +30,8 @@ def main() -> int:
     parser.add_argument("--suite", type=Path, default=ROOT / "checks" / "pedestrian.yml")
     parser.add_argument("--fail-on", choices=["warn", "error"],
                         help="exit with status 1 if any check ends at this level or worse")
+    parser.add_argument("--out", type=Path, default=RESULTS,
+                        help="folder for the outputs (default: results/)")
     args = parser.parse_args()
 
     snapshot = args.snapshot or latest_snapshot()
@@ -37,10 +39,10 @@ def main() -> int:
     con, params, source = load_snapshot(snapshot)
     results = run_suite(con, checks, params)
 
-    RESULTS.mkdir(exist_ok=True)
-    write_csv(results, RESULTS / "dq_results.csv")
-    write_markdown(results, params, source, RESULTS / "DQ_REPORT.md")
-    (RESULTS / "snapshot.json").write_text(json.dumps(source, indent=2) + "\n")
+    args.out.mkdir(parents=True, exist_ok=True)
+    write_csv(results, args.out / "dq_results.csv")
+    write_markdown(results, params, source, args.out / "DQ_REPORT.md")
+    (args.out / "snapshot.json").write_text(json.dumps(source, indent=2) + "\n")
 
     for r in results:
         print(f"{r.status:5}  {r.check.id:34} {r.failing:>9,} / {r.checked:,}")
