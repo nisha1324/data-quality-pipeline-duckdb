@@ -86,7 +86,7 @@ def main() -> None:
         dest = out / f"{name}.parquet"
         print(f"downloading {ds} ...")
         fetch(f"{API}/{ds}/exports/parquet", dest)
-        rows = duckdb.sql(f"select count(*) from read_parquet('{dest}')").fetchone()[0]
+        rows = duckdb.execute(f"select count(*) from read_parquet('{dest}')").fetchone()[0]
         expected = metas[name]["records_count"]
         if rows != expected:
             raise SystemExit(f"{name}: {rows:,} rows downloaded but the portal "
